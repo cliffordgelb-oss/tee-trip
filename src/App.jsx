@@ -4,6 +4,7 @@ import Login from './pages/Login.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import NewTournament from './pages/NewTournament.jsx'
 import TournamentHome from './pages/TournamentHome.jsx'
+import RoundDetail from './pages/RoundDetail.jsx'
 
 function RequireAuth({ children }) {
   const { session, loading } = useAuth()
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="/login" element={<RedirectIfAuthed><Login /></RedirectIfAuthed>} />
         <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
         <Route path="/new" element={<RequireAuth><NewTournament /></RequireAuth>} />
+        <Route path="/t/:slug/round/:number" element={<RequireAuth><RoundDetail /></RequireAuth>} />
         <Route path="/t/:slug/*" element={<RequireAuth><TournamentHome /></RequireAuth>} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

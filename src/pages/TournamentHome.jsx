@@ -126,6 +126,7 @@ function Leaderboard({ tournament, players, rounds, holes, scores, roundStrokes 
 }
 
 function RoundsList({ rounds, holes }) {
+  const { slug } = useParams()
   if (!rounds.length) {
     return <div className="card"><p className="muted">No rounds configured.</p></div>
   }
@@ -135,7 +136,12 @@ function RoundsList({ rounds, holes }) {
         const roundHoles = holes.filter(h => h.round_id === r.id).sort((a, b) => a.hole - b.hole)
         const totalPar = roundHoles.reduce((s, h) => s + (h.par || 0), 0)
         return (
-          <div key={r.id} className="card">
+          <Link
+            key={r.id}
+            to={`/t/${slug}/round/${r.round_number}`}
+            className="card"
+            style={{ display: 'block', textDecoration: 'none', color: 'inherit' }}
+          >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
               <strong>R{r.round_number} — {r.name}</strong>
               <span className="small muted">{r.format.replace('_', ' ')}</span>
@@ -143,7 +149,7 @@ function RoundsList({ rounds, holes }) {
             <p className="small muted" style={{ margin: '.25rem 0 0' }}>
               {roundHoles.length} holes · par {totalPar} · status {r.status}
             </p>
-          </div>
+          </Link>
         )
       })}
     </div>
