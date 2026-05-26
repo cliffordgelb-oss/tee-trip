@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase.js'
 import { useAuth } from '../lib/auth.jsx'
 import { useTournament } from '../lib/useTournament.js'
 import { deriveStrokesForFormat, getStrokesOnHole } from '../lib/scoring.js'
+import { Shell, Header, Card, Button, Chip, PencilFilters } from '../components/ui.jsx'
 
 const GROUP_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F']
 
@@ -12,16 +13,22 @@ export default function RoundDetail() {
   const { user } = useAuth()
   const t = useTournament(slug)
 
-  if (t.loading) return <div className="shell"><p className="muted">Loading…</p></div>
-  if (t.error) return <div className="shell"><p style={{ color: 'var(--danger)' }}>{t.error}</p></div>
+  if (t.loading) return <Shell><p className="tt-muted">Loading…</p></Shell>
+  if (t.error) {
+    return (
+      <Shell>
+        <p style={{ color: 'var(--tt-pencil)' }}>{t.error}</p>
+      </Shell>
+    )
+  }
 
   const round = t.rounds.find(r => String(r.round_number) === String(number))
   if (!round) {
     return (
-      <div className="shell stack">
-        <Link to={`/t/${slug}/rounds`} className="small muted">← Rounds</Link>
-        <div className="card"><p>Round not found.</p></div>
-      </div>
+      <Shell>
+        <Link to={`/t/${slug}/rounds`} className="tt-small tt-muted">← Rounds</Link>
+        <Card><p>Round not found.</p></Card>
+      </Shell>
     )
   }
 
@@ -30,18 +37,21 @@ export default function RoundDetail() {
   const roundHoles = t.holes.filter(h => h.round_id === round.id).sort((a, b) => a.hole - b.hole)
   const roundStrokes = t.roundStrokes.filter(rs => rs.round_id === round.id)
   const roundScores = t.scores.filter(s => s.round_id === round.id)
+  const totalPar = roundHoles.reduce((s, h) => s + (h.par || 0), 0)
 
   return (
-    <div className="shell stack">
-      <Link to={`/t/${slug}/rounds`} className="small muted">← Rounds</Link>
-      <header className="stack--tight">
-        <h1 style={{ fontSize: '1.5rem', margin: 0 }}>
-          R{round.round_number} · {round.name}
-        </h1>
-        <p className="muted small" style={{ margin: 0 }}>
-          {round.format.replace('_', ' ')} · {roundHoles.length} holes · {round.status}
-        </p>
-      </header>
+    <Shell>
+      <Link
+        to={`/t/${slug}/rounds`}
+        className="tt-small tt-muted"
+        style={{ display: 'inline-block', marginBottom: 6 }}
+      >← Rounds</Link>
+      <Header
+        eyebrow={`Round ${round.round_number}`}
+        title={round.name}
+        meta={`${round.format.replace('_', ' ')} · ${roundHoles.length} holes · par ${totalPar} · status ${round.status}`}
+        right={<Chip tone="format">{round.format.replace('_', ' ')}</Chip>}
+      />
 
       <RoundSetup
         tournament={t.tournament}
@@ -51,6 +61,12 @@ export default function RoundDetail() {
         canEdit={isOwnerOrAdmin}
         onSaved={t.refetch}
       />
+
+      <h2 style={{
+        fontFamily: 'var(--tt-font-display)',
+        fontSize: 'var(--tt-text-lg)',
+        margin: '20px 0 10px',
+      }}>Scorecard</h2>
 
       <Scorecard
         round={round}
@@ -62,7 +78,7 @@ export default function RoundDetail() {
         members={t.members}
         onChange={t.refetch}
       />
-    </div>
+    </Shell>
   )
 }
 
@@ -127,15 +143,20 @@ function RoundSetup({ tournament, round, players, roundStrokes, canEdit, onSaved
 
   if (!editing) {
     return (
-      <div className="card stack--tight">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2 style={{ fontSize: '1rem', margin: 0 }}>Setup</h2>
+      <Card>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <h2 style={{
+            fontSize: 'var(--tt-text-lg)',
+            margin: 0,
+            fontFamily: 'var(--tt-font-display)',
+            fontWeight: 600,
+          }}>Setup</h2>
           {canEdit && (
-            <button className="btn btn--ghost small" onClick={() => setEditing(true)}>Edit</button>
+            <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>Edit</Button>
           )}
         </div>
         {!allSet && (
-          <p className="small muted" style={{ margin: 0 }}>
+          <p className="tt-small tt-muted" style={{ margin: 0 }}>
             Players still need group assignments before scoring can start.
           </p>
         )}
@@ -146,25 +167,37 @@ function RoundSetup({ tournament, round, players, roundStrokes, canEdit, onSaved
           const skId = (round.scorekeepers || {})[g]
           const skPlayer = players.find(p => p.id === skId)
           return (
-            <div key={g} className="small" style={{ display: 'flex', gap: '.6rem', flexWrap: 'wrap' }}>
-              <strong>Group {g}:</strong>
-              <span>{groupPlayers.map(p => `${p.emoji} ${p.name}`).join(', ') || '—'}</span>
-              <span className="muted">
+            <div
+              key={g}
+              className="tt-small"
+              style={{ display: 'flex', gap: 8, padding: '6px 0', flexWrap: 'wrap', alignItems: 'center' }}
+            >
+              <strong style={{ fontWeight: 600 }}>Group {g}:</strong>
+              <span style={{ color: 'var(--tt-ink-soft)' }}>
+                {groupPlayers.map(p => `${p.emoji} ${p.name}`).join(' · ') || '—'}
+              </span>
+              <span className="tt-xs tt-muted">
                 Scorekeeper: {skPlayer ? `${skPlayer.emoji} ${skPlayer.name}` : '—'}
               </span>
             </div>
           )
         })}
-      </div>
+      </Card>
     )
   }
 
   return (
-    <div className="card stack">
-      <h2 style={{ fontSize: '1rem', margin: 0 }}>Setup</h2>
+    <Card>
+      <div className="stack">
+      <h2 style={{
+        fontSize: 'var(--tt-text-lg)',
+        margin: 0,
+        fontFamily: 'var(--tt-font-display)',
+        fontWeight: 600,
+      }}>Setup</h2>
 
       <div className="stack--tight">
-        <div className="small muted">Scorekeepers</div>
+        <div className="tt-eyebrow">Scorekeepers</div>
         {groupLetters.map(g => (
           <div key={g} style={{ display: 'grid', gridTemplateColumns: '4rem 1fr', gap: '.5rem', alignItems: 'center' }}>
             <span className="small">Group {g}</span>
@@ -182,7 +215,7 @@ function RoundSetup({ tournament, round, players, roundStrokes, canEdit, onSaved
       </div>
 
       <div className="stack--tight">
-        <div className="small muted">Per-player handicap & group</div>
+        <div className="tt-eyebrow">Per-player handicap & group</div>
         {players.map(p => (
           <div key={p.id} style={{
             display: 'grid',
@@ -195,6 +228,7 @@ function RoundSetup({ tournament, round, players, roundStrokes, canEdit, onSaved
               placeholder="Hcp"
               value={rows[p.id]?.handicap ?? ''}
               onChange={e => updateRow(p.id, { handicap: e.target.value })}
+              style={{ fontFamily: 'var(--tt-font-mono)', textAlign: 'center' }}
             />
             <select
               value={rows[p.id]?.group ?? ''}
@@ -207,17 +241,18 @@ function RoundSetup({ tournament, round, players, roundStrokes, canEdit, onSaved
         ))}
       </div>
 
-      {error && <p style={{ color: 'var(--danger)' }} className="small">{error}</p>}
+      {error && <p style={{ color: 'var(--tt-pencil)' }} className="tt-small">{error}</p>}
 
-      <div style={{ display: 'flex', gap: '.5rem' }}>
-        <button className="btn" onClick={save} disabled={saving}>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <Button onClick={save} disabled={saving}>
           {saving ? 'Saving…' : 'Save setup'}
-        </button>
-        <button className="btn btn--ghost" onClick={() => setEditing(false)} disabled={saving}>
+        </Button>
+        <Button variant="ghost" onClick={() => setEditing(false)} disabled={saving}>
           Cancel
-        </button>
+        </Button>
       </div>
-    </div>
+      </div>
+    </Card>
   )
 }
 
@@ -252,13 +287,13 @@ function Scorecard({ round, players, holes, roundStrokes, scores, myUserId, memb
 
   if (!roundStrokes.length) {
     return (
-      <div className="card">
-        <p className="muted small">Save the round setup first to enable scoring.</p>
-      </div>
+      <Card>
+        <p className="tt-muted tt-small">Save the round setup first to enable scoring.</p>
+      </Card>
     )
   }
   if (!holes.length) {
-    return <div className="card"><p className="muted small">No holes configured for this round.</p></div>
+    return <Card><p className="tt-muted tt-small">No holes configured for this round.</p></Card>
   }
 
   // Scramble: only the captain (first listed player in the group) has scores written.
@@ -272,18 +307,24 @@ function Scorecard({ round, players, holes, roundStrokes, scores, myUserId, memb
   return (
     <div className="stack">
       {groupsPresent.length > 1 && (
-        <div style={{ display: 'flex', gap: '.25rem' }}>
+        <div style={{ display: 'flex', gap: 4 }}>
           {groupsPresent.map(g => (
             <button
               key={g}
-              className="btn"
-              style={{
-                background: activeGroup === g ? 'var(--accent)' : 'transparent',
-                color: activeGroup === g ? '#fff' : 'var(--ink-soft)',
-                border: '1px solid var(--line)',
-                padding: '.4rem .8rem',
-              }}
               onClick={() => setActiveGroup(g)}
+              style={{
+                padding: '.4rem .8rem',
+                borderRadius: 8,
+                background: activeGroup === g ? 'var(--tt-fairway)' : 'transparent',
+                color: activeGroup === g ? '#fff' : 'var(--tt-ink-soft)',
+                fontSize: 14,
+                fontWeight: 600,
+                border: 'none',
+                whiteSpace: 'nowrap',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                transition: 'background 150ms linear, color 150ms linear',
+              }}
             >Group {g}</button>
           ))}
         </div>
@@ -312,52 +353,81 @@ function Scorecard({ round, players, holes, roundStrokes, scores, myUserId, memb
 function ScorecardGrid({ round, players, holes, scores, effectiveStrokes, myPlayerId, isScramble, onChange }) {
   // For scramble, only the first player in the group (the "captain") is shown.
   const visiblePlayers = isScramble && players.length ? [players[0]] : players
+  const playerTotal = (pid) =>
+    scores.filter(s => s.player_id === pid).reduce((a, s) => a + (s.gross || 0), 0)
+
   return (
-    <div className="card" style={{ overflowX: 'auto', padding: '.5rem' }}>
-      <table style={{ borderCollapse: 'collapse', width: '100%' }}>
-        <thead>
-          <tr>
-            <th style={cellTh}>Hole</th>
-            <th style={cellTh}>Par</th>
-            <th style={cellTh}>SI</th>
-            {visiblePlayers.map(p => (
-              <th key={p.id} style={cellTh} title={p.name}>
-                {p.emoji}<br />
-                <span className="small">{p.initials || p.name}</span>
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {holes.map(h => (
-            <tr key={h.hole} style={{ borderTop: '1px solid var(--line)' }}>
-              <td style={cellTd}>{h.hole}</td>
-              <td style={cellTd}>{h.par}</td>
-              <td style={cellTd}>{h.stroke_index}</td>
+    <>
+      <Card padded={false} style={{ overflowX: 'auto', padding: 8 }}>
+        <PencilFilters />
+        <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+          <thead>
+            <tr>
+              <th style={cellTh}>Hole</th>
+              <th style={cellTh}>Par</th>
+              <th style={cellTh}>SI</th>
               {visiblePlayers.map(p => (
-                <ScoreCell
-                  key={p.id}
-                  round={round}
-                  hole={h}
-                  player={p}
-                  enteredBy={myPlayerId}
-                  effectiveStrokes={effectiveStrokes}
-                  initialValue={scores.find(s => s.player_id === p.id && s.hole === h.hole)?.gross ?? ''}
-                  onChange={onChange}
-                />
+                <th key={p.id} style={{ ...cellTh, paddingTop: 8 }} title={p.name}>
+                  <div style={{ fontSize: 18 }}>{p.emoji}</div>
+                  <div className="tt-xs" style={{
+                    marginTop: 2,
+                    fontFamily: 'var(--tt-font-ui)',
+                    color: 'var(--tt-ink-soft)',
+                  }}>{p.initials || p.name}</div>
+                </th>
               ))}
+              <th style={cellTh}>Tot</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-      <p className="small muted" style={{ margin: '.5rem 0 0' }}>
-        Strokes show as net under par when handicap applies. Scores save when you tab/blur out.
+          </thead>
+          <tbody>
+            {holes.map(h => (
+              <tr key={h.hole} style={{ borderTop: '1px solid var(--tt-line)' }}>
+                <td style={cellTd}>{h.hole}</td>
+                <td style={{ ...cellTd, color: 'var(--tt-ink-muted)' }}>{h.par}</td>
+                <td style={{ ...cellTd, color: 'var(--tt-ink-muted)' }}>{h.stroke_index}</td>
+                {visiblePlayers.map(p => (
+                  <ScoreCell
+                    key={p.id}
+                    round={round}
+                    hole={h}
+                    player={p}
+                    mine={p.id === myPlayerId}
+                    enteredBy={myPlayerId}
+                    effectiveStrokes={effectiveStrokes}
+                    holesCount={holes.length}
+                    initialValue={scores.find(s => s.player_id === p.id && s.hole === h.hole)?.gross ?? ''}
+                    onChange={onChange}
+                  />
+                ))}
+                <td style={{ ...cellTd, color: 'var(--tt-ink-muted)' }}>—</td>
+              </tr>
+            ))}
+            <tr style={{
+              borderTop: '2px solid var(--tt-fairway)',
+              background: 'var(--tt-cream-deep)',
+            }}>
+              <td style={cellTd} colSpan={3} className="tt-eyebrow">Total</td>
+              {visiblePlayers.map(p => {
+                const total = playerTotal(p.id)
+                return (
+                  <td key={p.id} style={{ ...cellTd, fontWeight: 700 }}>
+                    {total > 0 ? total : '—'}
+                  </td>
+                )
+              })}
+              <td style={cellTd}>—</td>
+            </tr>
+          </tbody>
+        </table>
+      </Card>
+      <p className="tt-xs tt-muted" style={{ marginTop: 8 }}>
+        Tap any cell to enter a gross score. Net difference colors the digit.
       </p>
-    </div>
+    </>
   )
 }
 
-function ScoreCell({ round, hole, player, enteredBy, effectiveStrokes, initialValue, onChange }) {
+function ScoreCell({ round, hole, player, mine, enteredBy, effectiveStrokes, holesCount, initialValue, onChange }) {
   const [val, setVal] = useState(String(initialValue ?? ''))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(false)
@@ -370,7 +440,6 @@ function ScoreCell({ round, hole, player, enteredBy, effectiveStrokes, initialVa
   async function commit() {
     const n = parseInt(val, 10)
     if (val === '' || Number.isNaN(n)) {
-      // Delete the score if cleared.
       if (initialValue != null && initialValue !== '') {
         setSaving(true)
         const del = await supabase
@@ -404,34 +473,99 @@ function ScoreCell({ round, hole, player, enteredBy, effectiveStrokes, initialVa
     onChange?.()
   }
 
-  const so = getStrokesOnHole(effectiveStrokes[player.id] || 0, hole.stroke_index, /* holesCount inferred from app */ undefined)
+  const so = getStrokesOnHole(effectiveStrokes[player.id] || 0, hole.stroke_index, holesCount)
   const grossNum = parseInt(val, 10)
   const netDiff = !Number.isNaN(grossNum) ? (grossNum - so - hole.par) : null
-  const tone = netDiff == null ? null : netDiff <= -2 ? '#1565c0' : netDiff === -1 ? '#2e7d32' : netDiff === 0 ? null : netDiff === 1 ? '#a05a00' : '#b94a3a'
+  const tone =
+    netDiff == null            ? null :
+    netDiff <= -2              ? 'var(--tt-score-eagle)' :
+    netDiff === -1             ? 'var(--tt-score-birdie)' :
+    netDiff === 0              ? 'var(--tt-ink)' :
+    netDiff === 1              ? 'var(--tt-score-bogey)' :
+                                 'var(--tt-score-double)'
+  const decorate = netDiff != null && netDiff <= -1 && val !== ''
 
   return (
     <td style={{ ...cellTd, position: 'relative' }}>
-      <input
-        type="number"
-        min={1}
-        max={20}
-        value={val}
-        onChange={e => setVal(e.target.value)}
-        onBlur={commit}
-        onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
-        style={{
-          width: '3rem',
-          textAlign: 'center',
-          padding: '.3em .2em',
-          color: tone || 'inherit',
-          fontWeight: tone ? 600 : 400,
-          borderColor: error ? 'var(--danger)' : undefined,
-          opacity: saving ? 0.6 : 1,
-        }}
-      />
+      <div style={{
+        position: 'relative',
+        display: 'inline-block',
+        width: 44,
+        height: 34,
+        verticalAlign: 'middle',
+      }}>
+        <input
+          inputMode="numeric"
+          value={val}
+          onChange={e => setVal(e.target.value.replace(/[^\d]/g, '').slice(0, 2))}
+          onBlur={commit}
+          onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            width: '100%',
+            height: '100%',
+            textAlign: 'center',
+            padding: 0,
+            border: '1px solid ' + (error ? 'var(--tt-pencil)' : (mine ? 'var(--tt-fairway)' : 'transparent')),
+            background: mine ? 'rgba(220, 232, 210, 0.4)' : 'transparent',
+            borderRadius: 6,
+            font: 'inherit',
+            fontFamily: 'var(--tt-font-mono)',
+            fontWeight: tone && netDiff !== 0 ? 700 : 500,
+            color: tone || 'var(--tt-ink)',
+            outline: 'none',
+            fontSize: 16,
+            opacity: saving ? 0.6 : 1,
+          }}
+        />
+        {decorate && (
+          <svg
+            style={{ position: 'absolute', inset: -4, pointerEvents: 'none', overflow: 'visible' }}
+            viewBox="0 0 60 44"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
+            <g fill="none" stroke="var(--tt-ink)" strokeLinecap="round">
+              <ellipse
+                cx="30" cy="22" rx="24" ry="16"
+                strokeWidth="1.4"
+                strokeDasharray="110 6"
+                strokeDashoffset="3"
+                opacity="0.85"
+                filter="url(#tt-pencil-1)"
+              />
+              <ellipse
+                cx="30.6" cy="21.4" rx="22.8" ry="15.2"
+                strokeWidth="1"
+                strokeDasharray="118 4"
+                strokeDashoffset="22"
+                opacity="0.55"
+                filter="url(#tt-pencil-2)"
+              />
+            </g>
+          </svg>
+        )}
+      </div>
     </td>
   )
 }
 
-const cellTh = { padding: '.4rem .3rem', fontWeight: 600, fontSize: '.8rem', color: 'var(--ink-soft)', textAlign: 'center' }
-const cellTd = { padding: '.3rem .2rem', fontSize: '.9rem', textAlign: 'center' }
+const cellTh = {
+  padding: '6px 4px',
+  fontFamily: 'var(--tt-font-ui)',
+  fontWeight: 600,
+  fontSize: 11,
+  letterSpacing: '0.12em',
+  textTransform: 'uppercase',
+  color: 'var(--tt-ink-soft)',
+  textAlign: 'center',
+}
+const cellTd = {
+  padding: '4px 2px',
+  fontFamily: 'var(--tt-font-mono)',
+  fontVariantNumeric: 'tabular-nums',
+  fontSize: 14,
+  textAlign: 'center',
+  color: 'var(--tt-ink)',
+}

@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase.js'
 import { PRESETS, presetForCount } from '../lib/scoringPresets.js'
 import { slugify, randomSuffix } from '../lib/slug.js'
 import { defaultHoles, defaultRound, defaultPlayer, ROUND_FORMATS } from '../lib/defaults.js'
+import { Shell, Header, Card, Button } from '../components/ui.jsx'
 
 const TOTAL_STEPS = 5
 
@@ -154,72 +155,87 @@ export default function NewTournament() {
   }
 
   return (
-    <div className="shell stack">
-      <Link to="/dashboard" className="small muted">← Dashboard</Link>
-      <header className="stack--tight">
-        <h1 style={{ fontSize: '1.5rem', margin: 0 }}>New tournament</h1>
-        <p className="muted small" style={{ margin: 0 }}>
-          Step {step} of {TOTAL_STEPS}
-        </p>
+    <Shell>
+      <Link
+        to="/dashboard"
+        className="tt-small tt-muted"
+        style={{ display: 'inline-block', marginBottom: 6 }}
+      >← Dashboard</Link>
+      <Header
+        eyebrow={`Step ${step} of ${TOTAL_STEPS}`}
+        title="New tournament"
+        meta="Takes about 5 minutes. You can edit everything later."
+      />
+
+      <div
+        aria-hidden="true"
+        style={{
+          height: 4,
+          background: 'var(--tt-line)',
+          borderRadius: 2,
+          overflow: 'hidden',
+          marginBottom: 16,
+        }}
+      >
         <div style={{
-          height: 4, background: 'var(--line)', borderRadius: 2, overflow: 'hidden',
-        }}>
-          <div style={{
-            width: `${(step / TOTAL_STEPS) * 100}%`,
-            height: '100%', background: 'var(--accent)',
-            transition: 'width .2s',
-          }} />
-        </div>
-      </header>
-
-      <div className="card stack">
-        {step === 1 && (
-          <Step1 {...{ title, onTitleChange, slug, setSlug, setSlugTouched }} />
-        )}
-        {step === 2 && (
-          <Step2 {...{ players, updatePlayer, addPlayer, removePlayer }} />
-        )}
-        {step === 3 && (
-          <Step3 {...{
-            overridePresetKey, setOverridePresetKey,
-            advanced, setAdvanced, advancedJson, setAdvancedJson,
-            derivedPreset, populatedPlayerCount,
-          }} />
-        )}
-        {step === 4 && (
-          <Step4 {...{ rounds, setRoundCount, updateRound, toggleChampionship }} />
-        )}
-        {step === 5 && (
-          <Step5 {...{ title, slug, players, derivedPreset, rounds }} />
-        )}
-
-        {error && <p style={{ color: 'var(--danger)' }} className="small">{error}</p>}
-
-        <div style={{ display: 'flex', gap: '.5rem', justifyContent: 'space-between' }}>
-          <button
-            className="btn btn--ghost"
-            onClick={back}
-            disabled={step === 1 || submitting}
-          >Back</button>
-          <button
-            className="btn"
-            onClick={handleNext}
-            disabled={submitting}
-          >
-            {step === TOTAL_STEPS ? (submitting ? 'Creating…' : 'Create tournament') : 'Next'}
-          </button>
-        </div>
+          width: `${(step / TOTAL_STEPS) * 100}%`,
+          height: '100%',
+          background: 'var(--tt-fairway)',
+          transition: 'width 150ms linear',
+        }} />
       </div>
-    </div>
+
+      <Card>
+        <div className="stack">
+          {step === 1 && (
+            <Step1 {...{ title, onTitleChange, slug, setSlug, setSlugTouched }} />
+          )}
+          {step === 2 && (
+            <Step2 {...{ players, updatePlayer, addPlayer, removePlayer }} />
+          )}
+          {step === 3 && (
+            <Step3 {...{
+              overridePresetKey, setOverridePresetKey,
+              advanced, setAdvanced, advancedJson, setAdvancedJson,
+              derivedPreset, populatedPlayerCount,
+            }} />
+          )}
+          {step === 4 && (
+            <Step4 {...{ rounds, setRoundCount, updateRound, toggleChampionship }} />
+          )}
+          {step === 5 && (
+            <Step5 {...{ title, slug, players, derivedPreset, rounds }} />
+          )}
+
+          {error && (
+            <p style={{ color: 'var(--tt-pencil)' }} className="tt-small">{error}</p>
+          )}
+
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between' }}>
+            <Button
+              variant="ghost"
+              onClick={back}
+              disabled={step === 1 || submitting}
+            >Back</Button>
+            <Button
+              onClick={handleNext}
+              disabled={submitting}
+            >
+              {step === TOTAL_STEPS ? (submitting ? 'Creating…' : 'Create tournament') : 'Next'}
+            </Button>
+          </div>
+        </div>
+      </Card>
+    </Shell>
   )
 }
 
 function Step1({ title, onTitleChange, slug, setSlug, setSlugTouched }) {
   return (
     <div className="stack">
-      <h2 style={{ fontSize: '1.125rem', margin: 0 }}>What's the trip called?</h2>
+      <h2 style={{ fontSize: 'var(--tt-text-lg)', margin: 0 }}>What's the trip called?</h2>
       <label className="stack--tight">
-        <span className="small muted">Title</span>
+        <span className="tt-eyebrow">Title</span>
         <input
           autoFocus
           value={title}
@@ -228,7 +244,7 @@ function Step1({ title, onTitleChange, slug, setSlug, setSlugTouched }) {
         />
       </label>
       <label className="stack--tight">
-        <span className="small muted">URL slug (auto-derived)</span>
+        <span className="tt-eyebrow">URL slug</span>
         <input
           value={slug}
           onChange={e => { setSlugTouched(true); setSlug(e.target.value.toLowerCase()) }}
@@ -244,7 +260,7 @@ function Step1({ title, onTitleChange, slug, setSlug, setSlugTouched }) {
 function Step2({ players, updatePlayer, addPlayer, removePlayer }) {
   return (
     <div className="stack">
-      <h2 style={{ fontSize: '1.125rem', margin: 0 }}>Who's playing?</h2>
+      <h2 style={{ fontSize: 'var(--tt-text-lg)', margin: 0 }}>Who's playing?</h2>
       <p className="small muted" style={{ margin: 0 }}>
         Add a row per player. Email is optional — when an invited email signs in with
         Google/Apple, they're auto-linked to that player.
@@ -323,7 +339,7 @@ function Step3({
 
   return (
     <div className="stack">
-      <h2 style={{ fontSize: '1.125rem', margin: 0 }}>How are you scoring?</h2>
+      <h2 style={{ fontSize: 'var(--tt-text-lg)', margin: 0 }}>How are you scoring?</h2>
       <p className="small muted" style={{ margin: 0 }}>
         We picked a preset based on your {populatedPlayerCount || 0} player(s). Adjust if needed.
       </p>
@@ -379,14 +395,14 @@ function Step3({
 function Step4({ rounds, setRoundCount, updateRound, toggleChampionship }) {
   return (
     <div className="stack">
-      <h2 style={{ fontSize: '1.125rem', margin: 0 }}>Rounds</h2>
+      <h2 style={{ fontSize: 'var(--tt-text-lg)', margin: 0 }}>Rounds</h2>
       <p className="small muted" style={{ margin: 0 }}>
         Pick a format per round. Default is 18 par-4 holes; edit pars and stroke index
         from tournament settings after creation.
       </p>
 
       <label className="stack--tight">
-        <span className="small muted">How many rounds?</span>
+        <span className="tt-eyebrow">How many rounds?</span>
         <input
           type="number"
           min={1}
@@ -441,7 +457,7 @@ function Step5({ title, slug, players, derivedPreset, rounds }) {
   const named = players.filter(p => p.name.trim())
   return (
     <div className="stack">
-      <h2 style={{ fontSize: '1.125rem', margin: 0 }}>Ready?</h2>
+      <h2 style={{ fontSize: 'var(--tt-text-lg)', margin: 0 }}>Ready?</h2>
       <dl className="stack--tight" style={{ margin: 0 }}>
         <Row k="Trip" v={title} />
         <Row k="URL" v={`/t/${slug}`} />

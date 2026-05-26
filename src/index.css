@@ -1,18 +1,81 @@
-:root {
-  --bg: #faf6ed;
-  --bg-card: #ffffff;
-  --ink: #1a3a2e;
-  --ink-soft: #4a5c54;
-  --ink-muted: #8a9690;
-  --accent: #1a3a2e;
-  --accent-soft: #2d5a47;
-  --line: #e6e0d2;
-  --danger: #b94a3a;
-  --shadow: 0 1px 2px rgba(26, 58, 46, 0.06), 0 4px 12px rgba(26, 58, 46, 0.04);
+/* Tee Trip — design tokens (ported from the design system handoff)
+   The metaphor is a vintage paper scorecard, modernized: warm cream paper,
+   white card inserts, sand gridlines, fairway-green ink, mono numerals. */
 
-  font-family: 'Fraunces', ui-serif, Georgia, serif;
-  color: var(--ink);
-  background: var(--bg);
+:root {
+  /* ── Core paper / ink ─────────────────────────────────────── */
+  --tt-cream:        #faf6ed;
+  --tt-cream-deep:   #f3ecd8;
+  --tt-paper:        #ffffff;
+  --tt-ink:          #1a3a2e;
+  --tt-ink-soft:     #4a5c54;
+  --tt-ink-muted:    #8a9690;
+  --tt-line:         #e6e0d2;
+  --tt-line-strong:  #d9c9a6;
+
+  /* ── Brand accents ────────────────────────────────────────── */
+  --tt-fairway:        #1a3a2e;
+  --tt-fairway-soft:   #2d5a47;
+  --tt-fairway-deep:   #17452a;
+  --tt-fairway-tint:   #dce8d2;
+
+  --tt-pencil:         #b94a3a;
+  --tt-pencil-soft:    #c94a36;
+
+  --tt-trophy:         #c49a3a;
+  --tt-trophy-soft:    #e2c875;
+
+  --tt-sky:            #8ab6c6;
+  --tt-sky-soft:       #d2e2e8;
+
+  /* ── Score tones (per-hole net coloring) ──────────────────── */
+  --tt-score-eagle:    #1565c0;
+  --tt-score-birdie:   #2e7d32;
+  --tt-score-par:      var(--tt-ink);
+  --tt-score-bogey:    #a05a00;
+  --tt-score-double:   #b94a3a;
+
+  /* ── Radius / spacing / elevation ─────────────────────────── */
+  --tt-radius-sm:   6px;
+  --tt-radius:     10px;
+  --tt-radius-md:  14px;
+  --tt-radius-lg:  20px;
+  --tt-radius-pill: 999px;
+
+  --tt-shadow-sm:  0 1px 2px rgba(26, 58, 46, 0.06);
+  --tt-shadow:     0 1px 2px rgba(26, 58, 46, 0.06), 0 4px 12px rgba(26, 58, 46, 0.04);
+  --tt-shadow-lg:  0 2px 4px rgba(26, 58, 46, 0.08), 0 12px 32px rgba(26, 58, 46, 0.08);
+
+  /* ── Typography families ──────────────────────────────────── */
+  --tt-font-display: 'Fraunces', ui-serif, Georgia, 'Times New Roman', serif;
+  --tt-font-ui:      'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --tt-font-mono:    'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* ── Typography scale ─────────────────────────────────────── */
+  --tt-text-xs:   0.75rem;
+  --tt-text-sm:   0.875rem;
+  --tt-text-base: 1rem;
+  --tt-text-lg:   1.125rem;
+  --tt-text-xl:   1.5rem;
+  --tt-text-2xl:  1.75rem;
+  --tt-text-3xl:  2.5rem;
+  --tt-text-4xl:  3.5rem;
+
+  /* ── Semantic aliases used across the app ─────────────────── */
+  --bg:        var(--tt-cream);
+  --bg-card:   var(--tt-paper);
+  --ink:       var(--tt-ink);
+  --ink-soft:  var(--tt-ink-soft);
+  --ink-muted: var(--tt-ink-muted);
+  --accent:        var(--tt-fairway);
+  --accent-soft:   var(--tt-fairway-soft);
+  --line:          var(--tt-line);
+  --danger:        var(--tt-pencil);
+  --shadow:        var(--tt-shadow);
+
+  font-family: var(--tt-font-ui);
+  color: var(--tt-ink);
+  background: var(--tt-cream);
 }
 
 * { box-sizing: border-box; }
@@ -22,15 +85,65 @@ html, body, #root {
   padding: 0;
   min-height: 100vh;
   min-height: 100dvh;
-  background: var(--bg);
-  color: var(--ink);
+  background: var(--tt-cream);
+  color: var(--tt-ink);
 }
 
 body {
+  font-family: var(--tt-font-ui);
+  font-size: var(--tt-text-base);
+  line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* ── Display type (Fraunces) ──────────────────────────────── */
+h1, h2, h3, h4 {
+  font-family: var(--tt-font-display);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--tt-ink);
+  margin: 0 0 .4em;
+  text-wrap: balance;
+}
+h1 { font-size: var(--tt-text-3xl); font-weight: 700; letter-spacing: -0.02em; }
+h2 { font-size: var(--tt-text-2xl); }
+h3 { font-size: var(--tt-text-xl); }
+h4 { font-size: var(--tt-text-lg); }
+
+.tt-display {
+  font-family: var(--tt-font-display);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  font-variation-settings: 'opsz' 144;
+}
+
+/* ── Numerals tabular wherever score-shaped ───────────────── */
+.tt-num, .tt-score, .tt-leaderboard td {
+  font-family: var(--tt-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+p { margin: 0 0 .8em; }
+small, .tt-small { font-size: var(--tt-text-sm); }
+.tt-xs    { font-size: var(--tt-text-xs); }
+.tt-muted { color: var(--tt-ink-muted); }
+.tt-soft  { color: var(--tt-ink-soft); }
+
+code, kbd { font-family: var(--tt-font-mono); font-size: .92em; }
+
+/* Eyebrow — uppercased meta text seen above headers + on scorecard cols */
+.tt-eyebrow {
+  font-family: var(--tt-font-ui);
+  font-size: var(--tt-text-xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--tt-ink-muted);
+}
+
+/* ── Form controls (token-driven defaults) ────────────────── */
 button {
   font-family: inherit;
   font-size: 1rem;
@@ -41,70 +154,67 @@ button {
 }
 
 a {
-  color: var(--accent-soft);
+  color: var(--tt-fairway-soft);
   text-decoration: none;
 }
 a:hover { text-decoration: underline; }
-
-h1, h2, h3 {
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  margin: 0 0 .5em;
-}
 
 input, select, textarea {
   font-family: inherit;
   font-size: 1rem;
   padding: .6em .8em;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg-card);
-  color: var(--ink);
+  border: 1px solid var(--tt-line);
+  border-radius: var(--tt-radius);
+  background: var(--tt-paper);
+  color: var(--tt-ink);
   width: 100%;
 }
 input:focus, select:focus, textarea:focus {
-  outline: 2px solid var(--accent-soft);
+  outline: 2px solid var(--tt-fairway-soft);
   outline-offset: -1px;
 }
 
+/* ── Layout primitives kept as classes for back-compat ────── */
+.shell {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem calc(4rem + env(safe-area-inset-bottom));
+}
+
+.card {
+  background: var(--tt-paper);
+  border: 1px solid var(--tt-line);
+  border-radius: var(--tt-radius-md);
+  padding: 1.125rem;
+  box-shadow: var(--tt-shadow);
+}
+
+.stack > * + * { margin-top: 1rem; }
+.stack--tight > * + * { margin-top: .5rem; }
+
+.muted { color: var(--tt-ink-muted); }
+.small { font-size: var(--tt-text-sm); }
+
+/* ── Buttons (still useful as a CSS class for non-component callers) */
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: .5em;
   padding: .7em 1.2em;
-  border-radius: 10px;
-  background: var(--accent);
+  border-radius: var(--tt-radius);
+  background: var(--tt-fairway);
   color: #fff;
   font-weight: 600;
-  transition: background .15s;
+  font-size: var(--tt-text-sm);
+  transition: background 150ms linear;
 }
-.btn:hover { background: var(--accent-soft); }
+.btn:hover  { background: var(--tt-fairway-soft); }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 
 .btn--ghost {
   background: transparent;
-  color: var(--ink);
-  border: 1px solid var(--line);
+  color: var(--tt-ink);
+  border: 1px solid var(--tt-line);
 }
-.btn--ghost:hover { background: var(--bg-card); }
-
-.shell {
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 2rem 1.25rem calc(4rem + env(safe-area-inset-bottom));
-}
-
-.card {
-  background: var(--bg-card);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 1.25rem;
-  box-shadow: var(--shadow);
-}
-
-.stack > * + * { margin-top: 1rem; }
-.stack--tight > * + * { margin-top: .5rem; }
-
-.muted { color: var(--ink-muted); }
-.small { font-size: .875rem; }
+.btn--ghost:hover { background: var(--tt-paper); }

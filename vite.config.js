@@ -11,11 +11,11 @@ export default defineConfig({
       filename: 'sw.js',
       registerType: 'autoUpdate',
       injectRegister: false,
-      includeAssets: ['apple-touch-icon.png', 'icon-192.png', 'icon-512.png'],
+      includeAssets: ['logo-icon.svg', 'logo-icon.png', 'logo-primary.svg', 'logo-wordmark.svg'],
       manifest: {
         name: 'Tee Trip',
         short_name: 'Tee Trip',
-        description: 'Run your golf trip tournament. Live scoring, leaderboards, chat.',
+        description: 'Plan the trip. Run the tournament. Live scoring, leaderboards, chat.',
         theme_color: '#1a3a2e',
         background_color: '#faf6ed',
         display: 'standalone',
@@ -23,9 +23,8 @@ export default defineConfig({
         scope: '/',
         start_url: '/',
         icons: [
-          { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
-          { src: 'icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+          { src: 'logo-icon.png', sizes: '512x512', type: 'image/png' },
+          { src: 'logo-icon.svg', sizes: 'any', type: 'image/svg+xml' },
         ],
       },
       injectManifest: {

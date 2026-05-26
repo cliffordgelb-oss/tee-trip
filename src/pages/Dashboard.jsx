@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase.js'
 import { useAuth } from '../lib/auth.jsx'
+import { Shell, Header, Card, Button, Chip } from '../components/ui.jsx'
 
 export default function Dashboard() {
   const { user, signOut } = useAuth()
@@ -13,7 +14,7 @@ export default function Dashboard() {
     async function load() {
       const { data, error } = await supabase
         .from('tournaments')
-        .select('id, slug, title, created_at, tournament_members!inner(role)')
+        .select('id, slug, title, status, created_at, tournament_members!inner(role)')
         .eq('tournament_members.user_id', user.id)
         .order('created_at', { ascending: false })
       if (cancelled) return
@@ -25,40 +26,83 @@ export default function Dashboard() {
   }, [user.id])
 
   return (
-    <div className="shell stack">
-      <header style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
-        <h1 style={{ fontSize: '1.5rem', margin: 0 }}>Tee Trip</h1>
-        <button className="btn btn--ghost small" onClick={signOut}>Sign out</button>
-      </header>
+    <Shell>
+      <Header
+        title="Tee Trip"
+        right={<Button variant="ghost" size="sm" onClick={signOut}>Sign out</Button>}
+      />
 
-      <div className="card stack--tight">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <h2 style={{ fontSize: '1.125rem', margin: 0 }}>Your tournaments</h2>
-          <Link to="/new" className="btn small">New tournament</Link>
+      <Card padded={false}>
+        <div style={{
+          padding: '14px 18px 6px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}>
+          <h2 style={{ fontSize: 'var(--tt-text-lg)', margin: 0, fontFamily: 'var(--tt-font-display)' }}>
+            Your tournaments
+          </h2>
+          <Link to="/new" style={{ textDecoration: 'none' }}>
+            <Button size="sm">New tournament</Button>
+          </Link>
         </div>
 
-        {error && <p style={{ color: 'var(--danger)' }} className="small">{error}</p>}
-        {!error && tournaments === null && <p className="muted small">Loading…</p>}
+        {error && (
+          <p style={{ color: 'var(--tt-pencil)', padding: '0 18px 16px', margin: 0 }} className="tt-small">
+            {error}
+          </p>
+        )}
+
+        {!error && tournaments === null && (
+          <p className="tt-small tt-muted" style={{ padding: '0 18px 16px', margin: 0 }}>
+            Loading…
+          </p>
+        )}
+
         {!error && tournaments?.length === 0 && (
-          <p className="muted small">
+          <p className="tt-small tt-muted" style={{ padding: '0 18px 16px', margin: 0 }}>
             No tournaments yet. Start one — takes about 5 minutes.
           </p>
         )}
+
         {!error && tournaments?.length > 0 && (
           <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-            {tournaments.map(t => (
-              <li key={t.id} style={{ padding: '.6rem 0', borderTop: '1px solid var(--line)' }}>
-                <Link to={`/t/${t.slug}`} style={{ display: 'block' }}>
-                  <strong>{t.title}</strong>
-                  <span className="muted small" style={{ marginLeft: '.5rem' }}>
-                    {t.tournament_members?.[0]?.role ?? 'member'}
-                  </span>
-                </Link>
-              </li>
-            ))}
+            {tournaments.map(t => {
+              const role = t.tournament_members?.[0]?.role ?? 'member'
+              return (
+                <li key={t.id} style={{ borderTop: '1px solid var(--tt-line)' }}>
+                  <Link
+                    to={`/t/${t.slug}`}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'baseline',
+                      padding: '12px 18px',
+                      textDecoration: 'none',
+                      color: 'inherit',
+                    }}
+                  >
+                    <span>
+                      <strong style={{ fontWeight: 600 }}>{t.title}</strong>
+                      <span className="tt-xs tt-muted" style={{ marginLeft: 8, textTransform: 'capitalize' }}>
+                        {role}
+                      </span>
+                    </span>
+                    <span className="tt-xs tt-muted">{t.status}</span>
+                  </Link>
+                </li>
+              )
+            })}
           </ul>
         )}
+      </Card>
+
+      <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
+        <Chip tone="format">PWA</Chip>
+        <span className="tt-xs tt-muted">
+          Installable to home screen — same scoring, offline-ready.
+        </span>
       </div>
-    </div>
+    </Shell>
   )
 }
