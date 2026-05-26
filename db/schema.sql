@@ -511,6 +511,147 @@ after insert on notification_events
 for each row execute function fn_dispatch_notification();
 
 -- ============================================================
+-- RPC: create a tournament (atomic, from the setup wizard)
+-- ============================================================
+-- Accepts a config jsonb of the shape:
+-- {
+--   "slug": "bama-2026",
+--   "title": "Bama Golf Trip 2026",
+--   "num_groups": 2,
+--   "championship_tier_size": 3,
+--   "scoring_config": { ...same shape as tournaments.scoring_config... },
+--   "players": [
+--     { "slug":"cliff","name":"Cliff","emoji":"🐅","initials":"CG","email":null,"display_order":0 },
+--     ...
+--   ],
+--   "championship_round_number": 5,
+--   "rounds": [
+--     {
+--       "round_number": 1,
+--       "name": "Round 1 — Ross Bridge",
+--       "format": "individual_stroke",
+--       "holes": [ { "hole":1,"par":4,"stroke_index":7 }, ... ]
+--     },
+--     ...
+--   ]
+-- }
+-- Returns: { "id": "<uuid>", "slug": "...", "player_id_map": {"cliff":"<uuid>", ...} }
+create or replace function rpc_create_tournament(config jsonb)
+returns jsonb language plpgsql security invoker as $$
+declare
+  v_uid                       uuid := auth.uid();
+  v_t_id                      uuid;
+  v_slug                      text;
+  v_title                     text;
+  v_player                    jsonb;
+  v_round                     jsonb;
+  v_hole                      jsonb;
+  v_round_id                  bigint;
+  v_player_id_map             jsonb := '{}'::jsonb;
+  v_p_uuid                    uuid;
+  v_p_slug                    text;
+  v_championship_round_number int;
+  v_championship_round_id     bigint;
+begin
+  if v_uid is null then raise exception 'Not authenticated'; end if;
+
+  v_slug  := config->>'slug';
+  v_title := config->>'title';
+  if v_slug is null or v_title is null then
+    raise exception 'slug and title are required';
+  end if;
+
+  insert into tournaments (
+    slug, title, owner_user_id, num_groups, championship_tier_size, scoring_config, status
+  ) values (
+    v_slug,
+    v_title,
+    v_uid,
+    coalesce((config->>'num_groups')::int, 2),
+    coalesce((config->>'championship_tier_size')::int, 3),
+    coalesce(config->'scoring_config', '{}'::jsonb),
+    'setup'
+  ) returning id into v_t_id;
+
+  for v_player in select * from jsonb_array_elements(coalesce(config->'players','[]'::jsonb))
+  loop
+    v_p_slug := v_player->>'slug';
+    insert into players (tournament_id, slug, name, emoji, initials, display_order)
+    values (
+      v_t_id,
+      v_p_slug,
+      v_player->>'name',
+      coalesce(nullif(v_player->>'emoji',''), '⛳'),
+      v_player->>'initials',
+      coalesce((v_player->>'display_order')::int, 0)
+    ) returning id into v_p_uuid;
+    v_player_id_map := jsonb_set(v_player_id_map, array[v_p_slug], to_jsonb(v_p_uuid));
+
+    if nullif(v_player->>'email','') is not null then
+      insert into tournament_members (tournament_id, user_id, player_id, role, email_invite)
+      values (v_t_id, null, v_p_uuid, 'member', lower(v_player->>'email'))
+      on conflict do nothing;
+    end if;
+  end loop;
+
+  v_championship_round_number := nullif(config->>'championship_round_number','')::int;
+  for v_round in select * from jsonb_array_elements(coalesce(config->'rounds','[]'::jsonb))
+  loop
+    insert into rounds (tournament_id, round_number, name, format, status)
+    values (
+      v_t_id,
+      (v_round->>'round_number')::int,
+      v_round->>'name',
+      v_round->>'format',
+      'pending'
+    ) returning id into v_round_id;
+
+    for v_hole in select * from jsonb_array_elements(coalesce(v_round->'holes','[]'::jsonb))
+    loop
+      insert into holes (round_id, tournament_id, hole, par, stroke_index)
+      values (
+        v_round_id,
+        v_t_id,
+        (v_hole->>'hole')::int,
+        (v_hole->>'par')::int,
+        (v_hole->>'stroke_index')::int
+      );
+    end loop;
+
+    if v_championship_round_number is not null
+       and (v_round->>'round_number')::int = v_championship_round_number then
+      v_championship_round_id := v_round_id;
+    end if;
+  end loop;
+
+  if v_championship_round_id is not null then
+    update tournaments
+       set championship_round_id = v_championship_round_id
+     where id = v_t_id;
+  end if;
+
+  -- If the owner's auth email matches a player slot's email_invite (e.g. they added
+  -- themselves with their own email), claim it now too.
+  update tournament_members tm
+     set user_id = v_uid,
+         email_invite = null
+    from auth.users u
+   where tm.tournament_id = v_t_id
+     and tm.user_id is null
+     and u.id = v_uid
+     and u.email is not null
+     and lower(tm.email_invite) = lower(u.email);
+
+  return jsonb_build_object(
+    'id', v_t_id,
+    'slug', v_slug,
+    'player_id_map', v_player_id_map
+  );
+end $$;
+
+grant execute on function rpc_create_tournament(jsonb) to authenticated;
+
+-- ============================================================
 -- Realtime publication
 -- ============================================================
 do $$
