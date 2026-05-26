@@ -3,7 +3,7 @@ import { useAuth } from '../lib/auth.jsx'
 import { Shell, Card, Button } from '../components/ui.jsx'
 
 export default function Login() {
-  const { signInWithGoogle, signInWithApple } = useAuth()
+  const { signInWithGoogle } = useAuth()
   const [busy, setBusy] = useState(null)
   const [error, setError] = useState(null)
 
@@ -37,14 +37,6 @@ export default function Login() {
               style={{ width: '100%' }}
             >
               {busy === 'google' ? 'Redirecting…' : 'Continue with Google'}
-            </Button>
-            <Button
-              variant="apple"
-              disabled={!!busy}
-              onClick={() => run('apple', signInWithApple)}
-              style={{ width: '100%' }}
-            >
-              {busy === 'apple' ? 'Redirecting…' : 'Continue with Apple'}
             </Button>
           </div>
 
