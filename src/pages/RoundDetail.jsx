@@ -3,7 +3,12 @@ import { Link, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase.js'
 import { useAuth } from '../lib/auth.jsx'
 import { useTournament } from '../lib/useTournament.js'
-import { deriveStrokesForFormat, getStrokesOnHole, computeSkinsForRound, isSkinsEligible } from '../lib/scoring.js'
+import {
+  deriveStrokesForFormat, getStrokesOnHole,
+  computeSkinsForRound, isSkinsEligible,
+  computeNassauForRound, isNassauEligible,
+  computeVegasForRound,
+} from '../lib/scoring.js'
 import { Shell, Header, Card, Button, Chip, PencilFilters } from '../components/ui.jsx'
 
 const GROUP_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F']
@@ -88,7 +93,208 @@ export default function RoundDetail() {
           roundStrokes={roundStrokes}
         />
       )}
+
+      {isNassauEligible(round) && (
+        <NassauPanel
+          round={round}
+          players={t.players}
+          holes={roundHoles}
+          scores={roundScores}
+          roundStrokes={roundStrokes}
+        />
+      )}
+
+      <VegasPanel
+        round={round}
+        players={t.players}
+        holes={roundHoles}
+        scores={roundScores}
+        roundStrokes={roundStrokes}
+      />
     </Shell>
+  )
+}
+
+// ── Nassau panel (per round) ─────────────────────────────────
+function NassauPanel({ round, players, holes, scores, roundStrokes }) {
+  const result = useMemo(
+    () => computeNassauForRound({ round, holes, scores, roundStrokes }),
+    [round, holes, scores, roundStrokes]
+  )
+  const playerMap = useMemo(
+    () => Object.fromEntries(players.map(p => [p.id, p])),
+    [players]
+  )
+  if (!result.eligible) return null
+  const legOrder = ['front9', 'back9', 'total'].filter(name => result.legs[name])
+
+  return (
+    <>
+      <h2 style={{
+        fontFamily: 'var(--tt-font-display)',
+        fontSize: 'var(--tt-text-lg)',
+        margin: '20px 0 10px',
+      }}>Nassau</h2>
+
+      <Card>
+        <p className="tt-xs tt-muted" style={{ margin: '0 0 12px' }}>
+          Three side bets: front 9, back 9, total — net, lowest wins each.
+        </p>
+        <div className="stack--tight">
+          {legOrder.map(legName => {
+            const leg = result.legs[legName]
+            const label = legName === 'front9' ? 'Front 9' : legName === 'back9' ? 'Back 9' : 'Total 18'
+            const winnerPlayer = leg.winner ? playerMap[leg.winner] : null
+            return (
+              <div key={legName} style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '8px 12px',
+                background: 'var(--tt-cream-deep)',
+                borderRadius: 8,
+                gap: 8,
+              }}>
+                <strong className="tt-small" style={{ fontWeight: 600, minWidth: 80 }}>{label}</strong>
+                <span className="tt-small" style={{ fontFamily: 'var(--tt-font-mono)', color: 'var(--tt-ink-soft)' }}>
+                  {!leg.complete && 'In progress…'}
+                  {leg.complete && leg.tied && 'Tied'}
+                  {leg.complete && winnerPlayer && (
+                    <>
+                      <span style={{ marginRight: 6 }}>{winnerPlayer.emoji}</span>
+                      <strong>{winnerPlayer.name}</strong>
+                      {' · '}
+                      <span style={{ color: 'var(--tt-ink-muted)' }}>
+                        {leg.totals[leg.winner] > 0 ? `+${leg.totals[leg.winner]}` : leg.totals[leg.winner]}
+                      </span>
+                    </>
+                  )}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      </Card>
+    </>
+  )
+}
+
+// ── Vegas panel (per round) ──────────────────────────────────
+function VegasPanel({ round, players, holes, scores, roundStrokes }) {
+  const result = useMemo(
+    () => computeVegasForRound({ round, holes, scores, roundStrokes }),
+    [round, holes, scores, roundStrokes]
+  )
+  const playerMap = useMemo(
+    () => Object.fromEntries(players.map(p => [p.id, p])),
+    [players]
+  )
+  if (!result.eligible) return null
+
+  const margin = result.total.A - result.total.B
+  const leader = margin === 0 ? null : margin > 0 ? 'A' : 'B'
+  const teamAEmojis = result.teams.A.map(pid => playerMap[pid]?.emoji ?? '⛳').join(' ')
+  const teamBEmojis = result.teams.B.map(pid => playerMap[pid]?.emoji ?? '⛳').join(' ')
+
+  return (
+    <>
+      <h2 style={{
+        fontFamily: 'var(--tt-font-display)',
+        fontSize: 'var(--tt-text-lg)',
+        margin: '20px 0 10px',
+      }}>Vegas</h2>
+
+      <Card>
+        <p className="tt-xs tt-muted" style={{ margin: '0 0 12px' }}>
+          2v2 head-to-head. Team score = digits concatenated, low first. A birdie flips the opponent's pair. Gross scores.
+        </p>
+
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gap: 8,
+          marginBottom: 12,
+        }}>
+          <div style={{
+            padding: '10px 12px',
+            background: leader === 'A' ? 'var(--tt-fairway-tint)' : 'var(--tt-cream-deep)',
+            border: `1px solid ${leader === 'A' ? 'var(--tt-fairway)' : 'transparent'}`,
+            borderRadius: 8,
+            textAlign: 'center',
+          }}>
+            <div style={{ fontSize: 18 }}>{teamAEmojis}</div>
+            <div className="tt-eyebrow" style={{ margin: '4px 0 2px' }}>Team A</div>
+            <div style={{ fontFamily: 'var(--tt-font-mono)', fontWeight: 700, fontSize: 'var(--tt-text-xl)' }}>
+              {result.total.A}
+            </div>
+          </div>
+          <div style={{
+            padding: '10px 12px',
+            background: leader === 'B' ? 'var(--tt-fairway-tint)' : 'var(--tt-cream-deep)',
+            border: `1px solid ${leader === 'B' ? 'var(--tt-fairway)' : 'transparent'}`,
+            borderRadius: 8,
+            textAlign: 'center',
+          }}>
+            <div style={{ fontSize: 18 }}>{teamBEmojis}</div>
+            <div className="tt-eyebrow" style={{ margin: '4px 0 2px' }}>Team B</div>
+            <div style={{ fontFamily: 'var(--tt-font-mono)', fontWeight: 700, fontSize: 'var(--tt-text-xl)' }}>
+              {result.total.B}
+            </div>
+          </div>
+        </div>
+
+        <div className="tt-eyebrow" style={{ marginBottom: 6 }}>Hole by hole</div>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(56px, 1fr))',
+          gap: 4,
+        }}>
+          {result.bins.map(bin => <VegasPill key={bin.hole} bin={bin} />)}
+        </div>
+      </Card>
+    </>
+  )
+}
+
+function VegasPill({ bin }) {
+  const baseStyle = {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    padding: '4px 2px',
+    borderRadius: 6,
+    fontFamily: 'var(--tt-font-mono)',
+    fontVariantNumeric: 'tabular-nums',
+    fontSize: 11,
+    fontWeight: 600,
+    border: '1px solid var(--tt-line)',
+  }
+  if (bin.status === 'played') {
+    const winColor = bin.winner === 'A'
+      ? { background: 'var(--tt-fairway-tint)', color: 'var(--tt-fairway-deep)' }
+      : bin.winner === 'B'
+      ? { background: 'rgba(196,154,58,.15)', color: '#8a6a1e' }
+      : { color: 'var(--tt-ink-muted)' }
+    return (
+      <span style={{ ...baseStyle, ...winColor }}>
+        <span style={{ color: 'var(--tt-ink-muted)', fontSize: 10 }}>{bin.hole}</span>
+        <span>{bin.aScore} · {bin.bScore}</span>
+      </span>
+    )
+  }
+  if (bin.status === 'pending') {
+    return (
+      <span style={{ ...baseStyle, color: 'var(--tt-ink-muted)' }}>
+        <span style={{ fontSize: 10 }}>{bin.hole}</span>
+        <span>—</span>
+      </span>
+    )
+  }
+  return (
+    <span style={{ ...baseStyle, color: 'var(--tt-ink-muted)', opacity: 0.5 }}>
+      <span style={{ fontSize: 10 }}>{bin.hole}</span>
+      <span>·</span>
+    </span>
   )
 }
 

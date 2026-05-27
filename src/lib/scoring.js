@@ -57,6 +57,18 @@ export function deriveStrokesForFormat(strokesMap, formatKey) {
   return out
 }
 
+// ----- Standard Stableford lookup. `diff` is net-minus-par on a hole
+// (lower is better). Defaults to the World Handicap System scale; owners
+// can override via scoring_config.stableford.pointsTable in advanced mode.
+export function stablefordPointsForDiff(diff, pointsTable) {
+  const t = pointsTable
+  if (diff <= -2) return t?.eagleOrBetter ?? 8
+  if (diff === -1) return t?.birdie ?? 4
+  if (diff === 0) return t?.par ?? 2
+  if (diff === 1) return t?.bogey ?? 1
+  return t?.doubleOrWorse ?? 0
+}
+
 // ----- Split a prize array across ranked entries; ties average the prizes they share.
 // entries: [{ pid, value }]
 // prizes: array of point values (e.g. [5,3,1])
@@ -147,7 +159,7 @@ export function championshipLadder(n) {
 }
 
 // ----- Award points for one round.
-// scoringConfig: jsonb { individual_stroke, best_ball, scramble, championship }
+// scoringConfig: jsonb { individual_stroke, stableford, best_ball, scramble, championship }
 // cumulativeBefore: { [pid]: points } for championship seeding; null for non-championship
 export function computeRoundPoints({
   players, round, holes, scores, roundStrokes, scoringConfig, cumulativeBefore = null,
@@ -168,6 +180,7 @@ export function computeRoundPoints({
   const roundScores = (scores || []).filter(s => s.round_id === round.id)
 
   const isf = scoringConfig?.individual_stroke ?? {}
+  const sf  = scoringConfig?.stableford ?? {}
   const bb  = scoringConfig?.best_ball ?? {}
   const sc  = scoringConfig?.scramble ?? {}
   const ch  = scoringConfig?.championship ?? {}
@@ -188,6 +201,51 @@ export function computeRoundPoints({
 
     // Head-to-head match-play bonus (only when num_groups === 2 — generalizing
     // to round-robin is a v2 task).
+    if (matchPlayBonus > 0 && groups.size === 2) {
+      const [[, gA], [, gB]] = [...groups]
+      const fieldStrokes = deriveStrokesForFormat(strokesMap, 'best_ball')
+      const aFull = roundScores.filter(s => gA.includes(s.player_id)).length === gA.length * holesCount
+      const bFull = roundScores.filter(s => gB.includes(s.player_id)).length === gB.length * holesCount
+      if (aFull && bFull) {
+        const match = computeTeamBestBallMatch(gA, gB, sortedHoles, roundScores, fieldStrokes)
+        const winners = match.aHolesUp > 0 ? gA : (match.aHolesUp < 0 ? gB : [])
+        winners.forEach(pid => { points[pid] += matchPlayBonus })
+      }
+    }
+    return points
+  }
+
+  if (round.format === 'stableford') {
+    // Per-hole net points vs par (eagle+=8, birdie=4, par=2, bogey=1, double+=0
+    // by default). Tally per player, then award placement points within the
+    // group. Same per-group / per-group-min-handicap convention as
+    // individual_stroke. Highest stableford total wins the group.
+    const placement = sf.placement ?? [12, 8, 4]
+    const matchPlayBonus = sf.matchPlayBonus ?? 0
+    const pointsTable = sf.pointsTable
+
+    for (const [, gPids] of groups) {
+      const totals = {}
+      let allComplete = true
+      for (const pid of gPids) {
+        let total = 0
+        for (const h of sortedHoles) {
+          const s = roundScores.find(sc2 => sc2.player_id === pid && sc2.hole === h.hole)
+          if (!s) { allComplete = false; break }
+          const so = getStrokesOnHole(effectiveStrokes[pid] || 0, h.stroke_index, holesCount)
+          total += stablefordPointsForDiff(s.gross - so - h.par, pointsTable)
+        }
+        if (!allComplete) break
+        totals[pid] = total
+      }
+      if (!allComplete) continue
+      const entries = gPids.map(pid => ({ pid, value: totals[pid] }))
+      const alloc = allocateSplit(entries, placement, false) // higher stableford wins
+      for (const pid of Object.keys(alloc)) points[pid] += alloc[pid]
+    }
+
+    // Same head-to-head bonus shape as individual_stroke — best-net match
+    // between the two groups settles the bonus.
     if (matchPlayBonus > 0 && groups.size === 2) {
       const [[, gA], [, gB]] = [...groups]
       const fieldStrokes = deriveStrokesForFormat(strokesMap, 'best_ball')
@@ -316,7 +374,7 @@ export function computeRoundPoints({
 // championship). Team-format rounds have ambiguous per-player skin
 // semantics — punt on those until users ask.
 
-export const SKINS_ELIGIBLE_FORMATS = new Set(['individual_stroke', 'championship'])
+export const SKINS_ELIGIBLE_FORMATS = new Set(['individual_stroke', 'stableford', 'championship'])
 
 export function isSkinsEligible(round) {
   return SKINS_ELIGIBLE_FORMATS.has(round?.format)
@@ -402,6 +460,217 @@ export function computeSkinsForTournament({ players, rounds, holes, scores, roun
     }
   }
   return { totals, byRound }
+}
+
+// ----- Nassau side game.
+// Three side bets per round: front 9 net, back 9 net, total 18 net.
+// Lowest net wins each leg. Field-wide. Individual rounds only.
+// No "press" mechanic in v1 (trailing-player double-up). Add later.
+//
+// 9-hole rounds collapse to a single "total" leg.
+
+export const NASSAU_ELIGIBLE_FORMATS = SKINS_ELIGIBLE_FORMATS
+
+export function isNassauEligible(round) {
+  return NASSAU_ELIGIBLE_FORMATS.has(round?.format)
+}
+
+export function computeNassauForRound({ round, holes, scores, roundStrokes }) {
+  const result = {
+    eligible: isNassauEligible(round),
+    legs: {},
+    wins: {},
+  }
+  if (!result.eligible) return result
+  if (!holes?.length) return result
+
+  const sortedHoles = [...holes].sort((a, b) => a.hole - b.hole)
+  const strokesMap = {}
+  for (const rs of roundStrokes || []) {
+    if (rs.round_id !== round.id) continue
+    strokesMap[rs.player_id] = { handicap: rs.handicap, group_assignment: rs.group_assignment }
+  }
+  const playerIds = Object.keys(strokesMap)
+  if (playerIds.length < 2) return result
+
+  const effectiveStrokes = deriveStrokesForFormat(strokesMap, 'best_ball')
+  const roundScores = (scores || []).filter(s => s.round_id === round.id)
+
+  // 18+ hole rounds get front9 + back9 + total. Shorter rounds only get total.
+  const legs = []
+  if (sortedHoles.length >= 18) {
+    legs.push(['front9', sortedHoles.slice(0, 9)])
+    legs.push(['back9', sortedHoles.slice(9, 18)])
+  }
+  legs.push(['total', sortedHoles])
+
+  for (const [legName, legHoles] of legs) {
+    const legTotals = {}
+    let allComplete = true
+    for (const pid of playerIds) {
+      let sum = 0
+      let entered = 0
+      for (const h of legHoles) {
+        const s = roundScores.find(sc => sc.player_id === pid && sc.hole === h.hole)
+        if (!s) continue
+        const so = getStrokesOnHole(effectiveStrokes[pid] || 0, h.stroke_index, sortedHoles.length)
+        sum += s.gross - so
+        entered++
+      }
+      if (entered === legHoles.length) {
+        legTotals[pid] = sum
+      } else {
+        allComplete = false
+      }
+    }
+
+    let winner = null
+    let tied = false
+    if (Object.keys(legTotals).length === playerIds.length) {
+      const lowest = Math.min(...Object.values(legTotals))
+      const winners = Object.entries(legTotals).filter(([, v]) => v === lowest)
+      if (winners.length === 1) {
+        winner = winners[0][0]
+        result.wins[winner] = (result.wins[winner] || 0) + 1
+      } else {
+        tied = true
+      }
+    }
+
+    result.legs[legName] = {
+      totals: legTotals,
+      winner,
+      tied,
+      complete: allComplete && Object.keys(legTotals).length === playerIds.length,
+      holes: legHoles.length,
+    }
+  }
+
+  return result
+}
+
+export function computeNassauForTournament({ players, rounds, holes, scores, roundStrokes }) {
+  const totals = Object.fromEntries(players.map(p => [p.id, 0]))
+  const byRound = {}
+  for (const r of rounds) {
+    const roundHoles = holes.filter(h => h.round_id === r.id)
+    const out = computeNassauForRound({ round: r, holes: roundHoles, scores, roundStrokes })
+    byRound[r.id] = out
+    if (!out.eligible) continue
+    for (const [pid, n] of Object.entries(out.wins)) {
+      totals[pid] = (totals[pid] || 0) + n
+    }
+  }
+  return { totals, byRound }
+}
+
+// ----- Vegas side game.
+// 2v2 head-to-head with concatenated team scores. Team's score for a
+// hole is the digits in low-then-high order: 4+5 = "45". A birdie by
+// the OPPONENT flips your pair (high-then-low) — punishes the other
+// side. Lower concatenated number wins the hole; difference is points.
+//
+// Eligibility: exactly 2 groups, exactly 2 players per group. Gross
+// scores (net breaks concatenation; standard Vegas is gross).
+
+export function checkVegasEligibility({ round, roundStrokes }) {
+  const groups = {}
+  for (const rs of roundStrokes || []) {
+    if (rs.round_id !== round.id) continue
+    const g = rs.group_assignment
+    if (!g) continue
+    if (!groups[g]) groups[g] = []
+    groups[g].push(rs.player_id)
+  }
+  const letters = Object.keys(groups).sort()
+  if (letters.length !== 2) {
+    return { eligible: false, reason: 'Vegas needs exactly 2 teams set up on the round.' }
+  }
+  if (groups[letters[0]].length !== 2 || groups[letters[1]].length !== 2) {
+    return { eligible: false, reason: 'Vegas needs exactly 2 players per team.' }
+  }
+  return {
+    eligible: true,
+    teams: { A: groups[letters[0]], B: groups[letters[1]] },
+    letters,
+  }
+}
+
+export function computeVegasForRound({ round, holes, scores, roundStrokes }) {
+  const eligibility = checkVegasEligibility({ round, roundStrokes })
+  const result = {
+    eligible: eligibility.eligible,
+    reason: eligibility.reason ?? null,
+    teams: eligibility.teams ?? null,
+    bins: [],
+    total: { A: 0, B: 0 },
+    unsettled: false,
+  }
+  if (!result.eligible) return result
+
+  const sortedHoles = [...holes].sort((a, b) => a.hole - b.hole)
+  const roundScores = (scores || []).filter(s => s.round_id === round.id)
+  let stop = false
+
+  for (const h of sortedHoles) {
+    if (stop) {
+      result.bins.push({ hole: h.hole, par: h.par, status: 'unplayed' })
+      continue
+    }
+    const aRaw = []
+    const bRaw = []
+    let ok = true
+    for (const pid of result.teams.A) {
+      const s = roundScores.find(sc => sc.player_id === pid && sc.hole === h.hole)
+      if (!s) { ok = false; break }
+      aRaw.push(s.gross)
+    }
+    if (ok) for (const pid of result.teams.B) {
+      const s = roundScores.find(sc => sc.player_id === pid && sc.hole === h.hole)
+      if (!s) { ok = false; break }
+      bRaw.push(s.gross)
+    }
+    if (!ok) {
+      result.bins.push({ hole: h.hole, par: h.par, status: 'pending' })
+      stop = true
+      result.unsettled = true
+      continue
+    }
+
+    const aLow = Math.min(...aRaw), aHigh = Math.max(...aRaw)
+    const bLow = Math.min(...bRaw), bHigh = Math.max(...bRaw)
+    const aBirdie = aRaw.some(s => s <= h.par - 1)
+    const bBirdie = bRaw.some(s => s <= h.par - 1)
+    // Standard Vegas: a birdie flips the OPPONENT's pair.
+    const aFlipped = bBirdie
+    const bFlipped = aBirdie
+    const aNum = aFlipped ? aHigh * 10 + aLow : aLow * 10 + aHigh
+    const bNum = bFlipped ? bHigh * 10 + bLow : bLow * 10 + bHigh
+
+    let winner = null
+    let diff = 0
+    if (aNum < bNum) { winner = 'A'; diff = bNum - aNum; result.total.A += diff }
+    else if (bNum < aNum) { winner = 'B'; diff = aNum - bNum; result.total.B += diff }
+
+    result.bins.push({
+      hole: h.hole, par: h.par, status: 'played',
+      aScore: aNum, bScore: bNum,
+      aFlipped, bFlipped, winner, diff,
+    })
+  }
+
+  return result
+}
+
+export function computeVegasForTournament({ rounds, holes, scores, roundStrokes }) {
+  const byRound = {}
+  for (const r of rounds) {
+    const roundHoles = holes.filter(h => h.round_id === r.id)
+    byRound[r.id] = computeVegasForRound({
+      round: r, holes: roundHoles, scores, roundStrokes,
+    })
+  }
+  return { byRound }
 }
 
 // ----- Full tournament leaderboard.

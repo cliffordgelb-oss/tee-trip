@@ -2,7 +2,12 @@ import { useMemo } from 'react'
 import { Link, NavLink, Route, Routes, useParams, Navigate } from 'react-router-dom'
 import { useTournament } from '../lib/useTournament.js'
 import { useAuth } from '../lib/auth.jsx'
-import { computeLeaderboard, computeSkinsForTournament, isSkinsEligible } from '../lib/scoring.js'
+import {
+  computeLeaderboard,
+  computeSkinsForTournament, isSkinsEligible,
+  computeNassauForTournament, isNassauEligible,
+  computeVegasForTournament,
+} from '../lib/scoring.js'
 import { Shell, Header, Card, Chip, PlayerAvatar } from '../components/ui.jsx'
 
 export default function TournamentHome() {
@@ -49,7 +54,7 @@ export default function TournamentHome() {
       <nav style={{ display: 'flex', gap: 4, overflowX: 'auto', marginBottom: 16 }}>
         <TabLink to={`/t/${slug}`} end>Leaderboard</TabLink>
         <TabLink to={`/t/${slug}/rounds`}>Rounds</TabLink>
-        <TabLink to={`/t/${slug}/skins`}>Skins</TabLink>
+        <TabLink to={`/t/${slug}/games`}>Side games</TabLink>
         <TabLink to={`/t/${slug}/chat`}>Chat</TabLink>
         {isOwnerOrAdmin && <TabLink to={`/t/${slug}/settings`}>Settings</TabLink>}
       </nav>
@@ -57,7 +62,9 @@ export default function TournamentHome() {
       <Routes>
         <Route index element={<Leaderboard {...t} />} />
         <Route path="rounds" element={<RoundsList {...t} />} />
-        <Route path="skins" element={<SkinsBoard {...t} />} />
+        <Route path="games" element={<SideGamesBoard {...t} />} />
+        {/* Back-compat: old /skins URL */}
+        <Route path="skins" element={<Navigate to={`/t/${slug}/games`} replace />} />
         <Route path="chat" element={<ChatStub />} />
         <Route
           path="settings"
@@ -191,132 +198,198 @@ function RoundsList({ rounds, holes }) {
   )
 }
 
-function SkinsBoard({ players, rounds, holes, scores, roundStrokes }) {
-  const { slug } = useParams()
-  const eligibleRounds = useMemo(
-    () => rounds.filter(r => isSkinsEligible(r)),
-    [rounds]
+function SideGamesBoard({ players, rounds, holes, scores, roundStrokes }) {
+  const playerMap = useMemo(
+    () => Object.fromEntries(players.map(p => [p.id, p])),
+    [players]
   )
-  const { totals, byRound } = useMemo(
-    () => computeSkinsForTournament({ players, rounds, holes, scores, roundStrokes }),
-    [players, rounds, holes, scores, roundStrokes]
-  )
-  const rows = useMemo(() => {
-    const playerMap = Object.fromEntries(players.map(p => [p.id, p]))
-    return Object.entries(totals)
-      .map(([pid, n]) => ({ player: playerMap[pid], total: n }))
-      .filter(r => r.player)
-      .sort((a, b) => b.total - a.total)
-  }, [totals, players])
-  const allUnsettled = eligibleRounds.reduce(
-    (s, r) => s + (byRound[r.id]?.unsettled || 0),
-    0
-  )
-
-  if (eligibleRounds.length === 0) {
-    return (
-      <Card>
-        <h2 style={{ fontSize: 'var(--tt-text-lg)', margin: '0 0 6px', fontFamily: 'var(--tt-font-display)' }}>
-          Skins
-        </h2>
-        <p className="tt-small tt-muted" style={{ margin: 0 }}>
-          Skins runs on individual-format rounds. None in this trip — add an Individual stroke or
-          Championship round to enable skins.
-        </p>
-      </Card>
-    )
-  }
 
   return (
     <div className="stack">
-      <Card padded={false} style={{ overflow: 'hidden' }}>
-        <div style={{ padding: '12px 18px 6px', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-          <h2 style={{ fontSize: 'var(--tt-text-lg)', margin: 0, fontFamily: 'var(--tt-font-display)' }}>
-            Skins
-          </h2>
-          <span className="tt-xs tt-muted">
-            Field-wide · net · {eligibleRounds.length} eligible round{eligibleRounds.length === 1 ? '' : 's'}
-          </span>
-        </div>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr>
-              <th style={skTh} className="tt-eyebrow">#</th>
-              <th style={skTh} className="tt-eyebrow">Player</th>
-              <th style={{ ...skTh, textAlign: 'right' }} className="tt-eyebrow">Skins</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, i) => {
-              const leader = i === 0 && row.total > 0
-              return (
-                <tr key={row.player.id} style={{
-                  borderTop: '1px solid var(--tt-line)',
-                  background: leader ? 'rgba(196,154,58,0.08)' : 'transparent',
-                }}>
-                  <td style={{ ...skTd, position: 'relative' }}>
-                    {leader && (
-                      <span style={{
-                        position: 'absolute', left: 6, top: '50%', transform: 'translateY(-50%)',
-                        width: 6, height: 6, borderRadius: '50%', background: 'var(--tt-trophy)',
-                      }} />
-                    )}
-                    <span style={{ paddingLeft: leader ? 12 : 0 }}>{i + 1}</span>
-                  </td>
-                  <td style={{ ...skTd, fontFamily: 'var(--tt-font-ui)' }}>
-                    <span style={{ marginRight: 6 }}>{row.player.emoji}</span>
-                    {row.player.name}
-                  </td>
-                  <td style={{ ...skTd, textAlign: 'right', fontWeight: 700 }}>{row.total}</td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </Card>
-
-      {allUnsettled > 0 && (
-        <p className="tt-small tt-muted" style={{ margin: 0 }}>
-          {allUnsettled} skin{allUnsettled === 1 ? '' : 's'} still carrying — undecided ties or
-          rounds in progress.
-        </p>
-      )}
-
-      {/* Per-round breakdown */}
-      <div className="stack--tight">
-        <div className="tt-eyebrow">By round</div>
-        {eligibleRounds.map(r => {
-          const result = byRound[r.id]
-          if (!result) return null
-          const won = result.bins.filter(b => b.status === 'won').length
-          const tied = result.bins.filter(b => b.status === 'tied').length
-          const pending = result.bins.filter(b => b.status === 'pending' || b.status === 'unplayed').length
-          return (
-            <Link
-              key={r.id}
-              to={`/t/${slug}/round/${r.round_number}`}
-              className="card"
-              style={{ display: 'block', textDecoration: 'none', color: 'inherit', padding: '10px 14px' }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
-                <strong style={{ fontWeight: 600 }}>R{r.round_number} — {r.name}</strong>
-                <span className="tt-xs tt-muted">
-                  {won} won · {tied} carryover · {pending} pending
-                </span>
-              </div>
-            </Link>
-          )
-        })}
-      </div>
+      <SkinsSection {...{ players, rounds, holes, scores, roundStrokes, playerMap }} />
+      <NassauSection {...{ players, rounds, holes, scores, roundStrokes, playerMap }} />
+      <VegasSection {...{ rounds, holes, scores, roundStrokes, playerMap }} />
     </div>
   )
 }
 
-const skTh = {
+function SkinsSection({ players, rounds, holes, scores, roundStrokes, playerMap }) {
+  const eligibleRounds = useMemo(() => rounds.filter(r => isSkinsEligible(r)), [rounds])
+  const { totals, byRound } = useMemo(
+    () => computeSkinsForTournament({ players, rounds, holes, scores, roundStrokes }),
+    [players, rounds, holes, scores, roundStrokes]
+  )
+  const rows = useMemo(() => Object.entries(totals)
+    .map(([pid, n]) => ({ player: playerMap[pid], total: n }))
+    .filter(r => r.player)
+    .sort((a, b) => b.total - a.total)
+  , [totals, playerMap])
+  const allUnsettled = eligibleRounds.reduce((s, r) => s + (byRound[r.id]?.unsettled || 0), 0)
+
+  return (
+    <Card padded={false} style={{ overflow: 'hidden' }}>
+      <SectionHeader
+        title="Skins"
+        sub={eligibleRounds.length === 0
+          ? 'No individual-format rounds — add one to enable.'
+          : `Field-wide · net · ${eligibleRounds.length} eligible round${eligibleRounds.length === 1 ? '' : 's'}`}
+      />
+      {eligibleRounds.length > 0 && (
+        <>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={sgTh} className="tt-eyebrow">#</th>
+                <th style={sgTh} className="tt-eyebrow">Player</th>
+                <th style={{ ...sgTh, textAlign: 'right' }} className="tt-eyebrow">Skins</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, i) => <LeaderRow key={row.player.id} row={row} rank={i + 1} />)}
+            </tbody>
+          </table>
+          {allUnsettled > 0 && (
+            <p className="tt-small tt-muted" style={{ margin: 0, padding: '8px 18px 14px' }}>
+              {allUnsettled} skin{allUnsettled === 1 ? '' : 's'} still carrying.
+            </p>
+          )}
+        </>
+      )}
+    </Card>
+  )
+}
+
+function NassauSection({ players, rounds, holes, scores, roundStrokes, playerMap }) {
+  const eligibleRounds = useMemo(() => rounds.filter(r => isNassauEligible(r)), [rounds])
+  const { totals } = useMemo(
+    () => computeNassauForTournament({ players, rounds, holes, scores, roundStrokes }),
+    [players, rounds, holes, scores, roundStrokes]
+  )
+  const rows = useMemo(() => Object.entries(totals)
+    .map(([pid, n]) => ({ player: playerMap[pid], total: n }))
+    .filter(r => r.player)
+    .sort((a, b) => b.total - a.total)
+  , [totals, playerMap])
+
+  return (
+    <Card padded={false} style={{ overflow: 'hidden' }}>
+      <SectionHeader
+        title="Nassau"
+        sub={eligibleRounds.length === 0
+          ? 'No individual-format rounds — add one to enable.'
+          : `Front 9 · Back 9 · Total — net · ${eligibleRounds.length} round${eligibleRounds.length === 1 ? '' : 's'}`}
+      />
+      {eligibleRounds.length > 0 && (
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              <th style={sgTh} className="tt-eyebrow">#</th>
+              <th style={sgTh} className="tt-eyebrow">Player</th>
+              <th style={{ ...sgTh, textAlign: 'right' }} className="tt-eyebrow">Legs won</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => <LeaderRow key={row.player.id} row={row} rank={i + 1} />)}
+          </tbody>
+        </table>
+      )}
+    </Card>
+  )
+}
+
+function VegasSection({ rounds, holes, scores, roundStrokes, playerMap }) {
+  const { byRound } = useMemo(
+    () => computeVegasForTournament({ rounds, holes, scores, roundStrokes }),
+    [rounds, holes, scores, roundStrokes]
+  )
+  const eligibleRounds = rounds.filter(r => byRound[r.id]?.eligible)
+
+  return (
+    <Card padded={false} style={{ overflow: 'hidden' }}>
+      <SectionHeader
+        title="Vegas"
+        sub={eligibleRounds.length === 0
+          ? 'Needs a round with exactly two 2-player teams. None set up yet.'
+          : `2v2 head-to-head · gross · ${eligibleRounds.length} round${eligibleRounds.length === 1 ? '' : 's'}`}
+      />
+      {eligibleRounds.length > 0 && (
+        <div style={{ padding: '0 18px 14px' }}>
+          {eligibleRounds.map(r => {
+            const v = byRound[r.id]
+            const teamA = v.teams.A.map(pid => playerMap[pid]?.emoji ?? '⛳').join('')
+            const teamB = v.teams.B.map(pid => playerMap[pid]?.emoji ?? '⛳').join('')
+            const margin = v.total.A - v.total.B
+            const leader = margin === 0 ? null : (margin > 0 ? 'A' : 'B')
+            return (
+              <div key={r.id} style={{
+                padding: '10px 0',
+                borderTop: '1px solid var(--tt-line)',
+              }}>
+                <div className="tt-small" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <strong>R{r.round_number} — {r.name}</strong>
+                  <span style={{ fontFamily: 'var(--tt-font-mono)' }}>
+                    {teamA} <strong style={{ color: leader === 'A' ? 'var(--tt-fairway)' : undefined }}>{v.total.A}</strong>
+                    {' · '}
+                    {teamB} <strong style={{ color: leader === 'B' ? 'var(--tt-fairway)' : undefined }}>{v.total.B}</strong>
+                  </span>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </Card>
+  )
+}
+
+function SectionHeader({ title, sub }) {
+  return (
+    <div style={{
+      padding: '12px 18px 6px',
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'baseline',
+      gap: 12,
+      flexWrap: 'wrap',
+    }}>
+      <h2 style={{ fontSize: 'var(--tt-text-lg)', margin: 0, fontFamily: 'var(--tt-font-display)' }}>
+        {title}
+      </h2>
+      <span className="tt-xs tt-muted" style={{ textAlign: 'right' }}>{sub}</span>
+    </div>
+  )
+}
+
+function LeaderRow({ row, rank }) {
+  const leader = rank === 1 && row.total > 0
+  return (
+    <tr style={{
+      borderTop: '1px solid var(--tt-line)',
+      background: leader ? 'rgba(196,154,58,0.08)' : 'transparent',
+    }}>
+      <td style={{ ...sgTd, position: 'relative' }}>
+        {leader && (
+          <span style={{
+            position: 'absolute', left: 6, top: '50%', transform: 'translateY(-50%)',
+            width: 6, height: 6, borderRadius: '50%', background: 'var(--tt-trophy)',
+          }} />
+        )}
+        <span style={{ paddingLeft: leader ? 12 : 0 }}>{rank}</span>
+      </td>
+      <td style={{ ...sgTd, fontFamily: 'var(--tt-font-ui)' }}>
+        <span style={{ marginRight: 6 }}>{row.player.emoji}</span>
+        {row.player.name}
+      </td>
+      <td style={{ ...sgTd, textAlign: 'right', fontWeight: 700 }}>{row.total}</td>
+    </tr>
+  )
+}
+
+const sgTh = {
   padding: '10px 12px', background: 'var(--tt-fairway)', color: '#fff',
   textAlign: 'left', fontWeight: 600, fontFamily: 'var(--tt-font-ui)',
 }
-const skTd = {
+const sgTd = {
   padding: '10px 12px', fontFamily: 'var(--tt-font-mono)',
   fontVariantNumeric: 'tabular-nums', fontSize: 14,
 }
