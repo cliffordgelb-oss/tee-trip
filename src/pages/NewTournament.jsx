@@ -6,11 +6,13 @@ import { slugify, randomSuffix } from '../lib/slug.js'
 import { defaultHoles, defaultPlayer, EMOJI_POOL, ROUND_FORMAT_TILES } from '../lib/defaults.js'
 import { Shell, Header, Card, Button } from '../components/ui.jsx'
 
-const TOTAL_STEPS = 5
+const TOTAL_STEPS = 4
 const PRESET_COUNTS = [4, 6, 8, 12]
 const ROUND_COUNT_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8]
 const DEFAULT_PLAYER_COUNT = 8
 const DEFAULT_ROUND_COUNT = 3
+// Rotation used by the "Decide for me" button to vary up the trip.
+const SUGGESTION_ROTATION = ['individual_stroke', 'best_ball', 'scramble', 'shamble']
 
 const TILE_BY_VALUE = Object.fromEntries(ROUND_FORMAT_TILES.map(t => [t.value, t]))
 
@@ -30,11 +32,9 @@ export default function NewTournament() {
     Array.from({ length: DEFAULT_PLAYER_COUNT }, (_, i) => defaultPlayer(i))
   )
 
-  // Step 3 — round formats picked, in order. Default seed:
-  // all stroke play except a championship final if there are 2+ rounds.
-  const [selectedFormats, setSelectedFormats] = useState(() =>
-    seedFormatsFor(DEFAULT_ROUND_COUNT)
-  )
+  // Step 3 — round formats picked, in order. Starts empty; user either
+  // taps tiles themselves or hits "Decide for me" for an auto-pick.
+  const [selectedFormats, setSelectedFormats] = useState([])
 
   // Step 4 — trip name (slug derives silently)
   const [title, setTitle] = useState('')
@@ -63,18 +63,13 @@ export default function NewTournament() {
   function applyRoundCount(n) {
     const clamped = Math.max(1, Math.min(12, n | 0))
     setRoundCount(clamped)
-    // Truncate selectedFormats to match; pad with stroke play if too few
-    setSelectedFormats(prev => {
-      if (prev.length === clamped) return prev
-      if (prev.length > clamped) {
-        return prev.slice(0, clamped)
-      }
-      const next = [...prev]
-      while (next.length < clamped) {
-        next.push(next.length === clamped - 1 && clamped >= 2 ? 'championship' : 'individual_stroke')
-      }
-      return moveChampionshipLast(next)
-    })
+    // Truncate if user previously picked more than the new count; never
+    // auto-add — they decide formats explicitly (or hit "Decide for me").
+    setSelectedFormats(prev => prev.slice(0, clamped))
+  }
+
+  function decideForMe() {
+    setSelectedFormats(suggestFormatsFor(roundCount))
   }
 
   function updatePlayer(i, patch) {
@@ -253,11 +248,10 @@ export default function NewTournament() {
           )}
           {step === 3 && (
             <Step3 {...{
-              selectedFormats, roundCount, addFormat, removeFormatAt,
+              selectedFormats, roundCount, addFormat, removeFormatAt, decideForMe,
             }} />
           )}
           {step === 4 && <Step4 {...{ title, onTitleChange }} />}
-          {step === 5 && <Step5 {...{ title, slug, players, derivedPreset, rounds }} />}
 
           {error && <p style={{ color: 'var(--tt-pencil)' }} className="tt-small">{error}</p>}
 
@@ -459,7 +453,7 @@ function Step2({ players, updatePlayer, addPlayer, removePlayer }) {
 }
 
 // ── Step 3 — round format tiles ──────────────────────────────
-function Step3({ selectedFormats, roundCount, addFormat, removeFormatAt }) {
+function Step3({ selectedFormats, roundCount, addFormat, removeFormatAt, decideForMe }) {
   const positions = useMemo(() => {
     const map = {}
     selectedFormats.forEach((fmt, i) => {
@@ -482,11 +476,23 @@ function Step3({ selectedFormats, roundCount, addFormat, removeFormatAt }) {
         Tap a format to add it as the next round. You can pick the same format more than
         once (e.g. two stroke-play days). Championship always plays last.
       </p>
-      <p className="tt-small" style={{ margin: 0, color: 'var(--tt-ink-soft)' }}>
-        <strong>{filled}</strong> of <strong>{roundCount}</strong> picked
-        {remaining > 0 && ` · ${remaining} to go`}
-        {atCap && ' · all set'}
-      </p>
+
+      <div style={{
+        display: 'flex',
+        gap: 8,
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        flexWrap: 'wrap',
+      }}>
+        <p className="tt-small" style={{ margin: 0, color: 'var(--tt-ink-soft)' }}>
+          <strong>{filled}</strong> of <strong>{roundCount}</strong> picked
+          {remaining > 0 && ` · ${remaining} to go`}
+          {atCap && ' · all set'}
+        </p>
+        <Button variant="ghost" size="sm" onClick={decideForMe}>
+          🎲 Decide for me
+        </Button>
+      </div>
 
       <div style={{ display: 'grid', gap: 10 }}>
         {ROUND_FORMAT_TILES.map(tile => {
@@ -614,42 +620,6 @@ function Step4({ title, onTitleChange }) {
   )
 }
 
-// ── Step 5 — review ──────────────────────────────────────────
-function Step5({ title, slug, players, derivedPreset, rounds }) {
-  const named = players.filter(p => p.name.trim())
-  return (
-    <div className="stack">
-      <h2 style={{ fontSize: 'var(--tt-text-lg)', margin: 0, fontFamily: 'var(--tt-font-display)' }}>
-        Ready?
-      </h2>
-      <dl className="stack--tight" style={{ margin: 0 }}>
-        <Row k="Trip" v={title} />
-        <Row k="URL" v={`/t/${slug || '(auto)'}`} />
-        <Row k="Players" v={
-          named.length === 0
-            ? `${players.length} (names later)`
-            : `${players.length}: ${named.map(p => `${p.emoji} ${p.name}`).join(', ')}${named.length < players.length ? ', …' : ''}`
-        } />
-        <Row k="Groups" v={String(derivedPreset.num_groups)} />
-        <Row k="Championship tier" v={String(derivedPreset.championship_tier_size)} />
-        <Row k="Rounds" v={`${rounds.length}: ${rounds.map(r => TILE_BY_VALUE[r.format]?.title ?? r.format).join(', ')}`} />
-      </dl>
-      <p className="tt-xs tt-muted" style={{ margin: 0 }}>
-        You can edit any of this from tournament settings after creation.
-      </p>
-    </div>
-  )
-}
-
-function Row({ k, v }) {
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: '8rem 1fr', gap: '.5rem' }}>
-      <dt className="tt-small tt-muted">{k}</dt>
-      <dd className="tt-small" style={{ margin: 0 }}>{v}</dd>
-    </div>
-  )
-}
-
 function deriveInitials(name) {
   if (!name) return ''
   const parts = name.trim().split(/\s+/)
@@ -663,10 +633,15 @@ function moveChampionshipLast(arr) {
   return [...arr.slice(0, champIdx), ...arr.slice(champIdx + 1), 'championship']
 }
 
-function seedFormatsFor(n) {
+// "Decide for me" — rotate stroke / best-ball / scramble / shamble for
+// variety, end with championship when the trip has 2+ rounds.
+function suggestFormatsFor(n) {
+  if (n <= 0) return []
+  if (n === 1) return ['individual_stroke']
   const out = []
-  for (let i = 0; i < n; i++) {
-    out.push(i === n - 1 && n >= 2 ? 'championship' : 'individual_stroke')
+  for (let i = 0; i < n - 1; i++) {
+    out.push(SUGGESTION_ROTATION[i % SUGGESTION_ROTATION.length])
   }
+  out.push('championship')
   return out
 }

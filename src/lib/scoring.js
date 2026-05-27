@@ -45,6 +45,8 @@ export function deriveStrokesForFormat(strokesMap, formatKey) {
   }
   const fieldRelative = formatKey === 'best_ball'
     || formatKey === 'scramble'
+    || formatKey === 'shamble'
+    || formatKey === 'pinehurst'
     || formatKey === 'championship'
   for (const [pid, s] of entries) {
     if (!s) continue
@@ -200,7 +202,10 @@ export function computeRoundPoints({
     return points
   }
 
-  if (round.format === 'best_ball') {
+  if (round.format === 'best_ball' || round.format === 'shamble') {
+    // Shamble: same scoring shape as best ball — team's hole score is
+    // the lowest individual on the team. The team-format difference is
+    // purely in how the ball is played, not in how points fall out.
     const winnerPoints = bb.winnerPoints ?? 15
     if (groups.size < 2) return points
     const totals = []
@@ -228,7 +233,9 @@ export function computeRoundPoints({
     return points
   }
 
-  if (round.format === 'scramble') {
+  if (round.format === 'scramble' || round.format === 'pinehurst') {
+    // Pinehurst: alternate-shot after the swap. One captain row per
+    // team per hole (same as scramble), so scoring code is identical.
     const winnerPoints = sc.winnerPoints ?? 15
     if (groups.size < 2) return points
     const totals = []

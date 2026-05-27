@@ -12,6 +12,8 @@ export const ROUND_FORMATS = [
   { value: 'individual_stroke', label: 'Individual stroke play' },
   { value: 'best_ball',         label: 'Best ball (team)' },
   { value: 'scramble',          label: 'Scramble (team)' },
+  { value: 'shamble',           label: 'Shamble (team)' },
+  { value: 'pinehurst',         label: 'Pinehurst (team)' },
   { value: 'championship',      label: 'Championship final (stroke play, seeded)' },
 ]
 
@@ -39,6 +41,20 @@ export const ROUND_FORMAT_TILES = [
     short: 'Two teams. Hit, pick the best shot, repeat.',
     desc:
       'Split into two teams. Everyone tees off, the team picks the best shot, then everyone plays from there. Same for the next shot, all the way down. Fast, social, forgiving of a bad day.',
+  },
+  {
+    value: 'shamble',
+    title: 'Shamble',
+    short: 'Teams tee off, take the best drive, then play your own ball.',
+    desc:
+      'A middle ground between scramble and best ball. Everyone tees off, the team picks the best drive, then each player finishes the hole with their own ball. The team\'s hole score is the lowest individual score. Less luck than scramble, less brutal than best ball.',
+  },
+  {
+    value: 'pinehurst',
+    title: 'Pinehurst (Chapman)',
+    short: 'Two-player teams. Tee off, switch balls, then alternate shot.',
+    desc:
+      'Old-school strategic format. Two-player teams; both partners tee off, then switch and play their partner\'s drive for shot two. After that, they pick the better-positioned ball and finish the hole alternate-shot. One score per team per hole. Best with even-numbered groups paired up.',
   },
   {
     value: 'championship',

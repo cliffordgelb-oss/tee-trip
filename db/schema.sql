@@ -92,7 +92,7 @@ create table if not exists rounds (
   tournament_id uuid not null references tournaments(id) on delete cascade,
   round_number  int  not null,
   name          text not null,
-  format        text not null check (format in ('individual_stroke','best_ball','scramble','championship')),
+  format        text not null check (format in ('individual_stroke','best_ball','scramble','shamble','pinehurst','championship')),
   status        text not null default 'pending' check (status in ('pending','active','complete')),
   scorekeepers  jsonb not null default '{}',  -- {"A":"<player_uuid>","B":"<player_uuid>"}
   starts_at     timestamptz,
@@ -403,7 +403,7 @@ begin
     where round_id = new.round_id and player_id = new.player_id;
   if v_handicap is null then v_handicap := 0; end if;
 
-  if v_format in ('best_ball','scramble','championship') then
+  if v_format in ('best_ball','scramble','shamble','pinehurst','championship') then
     select coalesce(min(handicap), 0) into v_field_min
       from round_strokes where round_id = new.round_id;
   else
