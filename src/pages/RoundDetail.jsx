@@ -12,7 +12,7 @@ import {
   wolfForHole, WOLF_DEFAULT_POINTS,
 } from '../lib/scoring.js'
 import { Shell, Header, Card, Button, Chip, PencilFilters } from '../components/ui.jsx'
-import ScoreDial from '../components/ScoreDial.jsx'
+import ScoreDial, { DIAL_KEY_BY_ANGLE_IDX, grossForDialKey } from '../components/ScoreDial.jsx'
 
 const GROUP_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F']
 
@@ -1266,18 +1266,28 @@ function ScoreCell({ round, hole, player, mine, enteredBy, effectiveStrokes, hol
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(false)
   const [dialAnchor, setDialAnchor] = useState(null)
+  const [armedKey, setArmedKey] = useState(null)
+  const [typing, setTyping] = useState(false)
 
-  const wrapRef = useRef(null)
+  const cellRef = useRef(null)
   const inputRef = useRef(null)
-  const pressTimer = useRef(null)
-  const longPressedRef = useRef(false)
+  const anchorRef = useRef(null)   // pinned center for pointer math
+  const armedRef = useRef(null)    // mirror of armedKey for pointerup commit
+  const draggedRef = useRef(false) // true once the pointer left the deadzone
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setVal(String(initialValue ?? ''))
   }, [initialValue])
 
-  // Writes `n` (or null to clear). Used by both blur-commit and the dial.
+  useEffect(() => {
+    if (typing) inputRef.current?.focus()
+  }, [typing])
+
+  const so = getStrokesOnHole(effectiveStrokes[player.id] || 0, hole.stroke_index, holesCount)
+
+  // Writes `n` (or null to clear). Shared by the dial picks and the
+  // keyboard-fallback input's blur commit.
   async function writeScore(n) {
     if (n == null) {
       if (initialValue == null || initialValue === '') return
@@ -1311,30 +1321,68 @@ function ScoreCell({ round, hole, player, mine, enteredBy, effectiveStrokes, hol
     setError(false); onChange?.()
   }
 
-  async function commit() {
-    if (val === '' || Number.isNaN(parseInt(val, 10))) {
-      await writeScore(null)
-      return
-    }
+  function pickKey(key) {
+    setDialAnchor(null); setArmedKey(null); armedRef.current = null
+    if (key === 'clear') { setVal(''); writeScore(null); return }
+    if (key === 'type')  { setTyping(true); return }
+    const n = grossForDialKey(key, hole.par, so)
+    if (n != null) { setVal(String(n)); writeScore(n) }
+  }
+
+  async function commitTyped() {
+    setTyping(false)
+    if (val === '' || Number.isNaN(parseInt(val, 10))) { await writeScore(null); return }
     await writeScore(parseInt(val, 10))
   }
 
-  function startPress() {
-    longPressedRef.current = false
-    if (pressTimer.current) clearTimeout(pressTimer.current)
-    pressTimer.current = setTimeout(() => {
-      longPressedRef.current = true
-      const r = wrapRef.current?.getBoundingClientRect()
-      if (!r) return
-      inputRef.current?.blur()
-      setDialAnchor(r)
-    }, 350)
+  // --- Gesture: press opens the dial, slide arms a chip, release commits.
+  function onPointerDown(e) {
+    if (typing) return  // input handles its own focus / keyboard
+    // suppress iOS callout, text selection, and the click on the underlying element
+    e.preventDefault()
+    const r = cellRef.current?.getBoundingClientRect()
+    if (!r) return
+    anchorRef.current = r
+    setDialAnchor(r)
+    setArmedKey(null); armedRef.current = null
+    draggedRef.current = false
+    try { cellRef.current.setPointerCapture(e.pointerId) } catch { /* unsupported */ }
   }
-  function cancelPress() {
-    if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null }
+  function onPointerMove(e) {
+    if (!anchorRef.current) return
+    const r = anchorRef.current
+    const dx = e.clientX - (r.left + r.width / 2)
+    const dy = e.clientY - (r.top + r.height / 2)
+    const dist = Math.hypot(dx, dy)
+    if (dist < 26) {
+      if (armedRef.current) { setArmedKey(null); armedRef.current = null }
+      return
+    }
+    draggedRef.current = true
+    // 0° = up (12 o'clock), increasing clockwise.
+    const ang = Math.atan2(dx, -dy) * 180 / Math.PI
+    const norm = (ang + 360) % 360
+    const idx = Math.round(norm / 45) % 8
+    const key = DIAL_KEY_BY_ANGLE_IDX[idx]
+    if (key !== armedRef.current) { setArmedKey(key); armedRef.current = key }
+  }
+  function onPointerUp(e) {
+    try { cellRef.current?.releasePointerCapture?.(e.pointerId) } catch { /* unsupported */ }
+    const armed = armedRef.current
+    if (armed) {
+      pickKey(armed)
+    } else if (draggedRef.current) {
+      // Released inside the deadzone after a drag — treat as cancel.
+      setDialAnchor(null)
+    }
+    // else: simple tap. Leave the dial open so the user can tap-select.
+    anchorRef.current = null
+  }
+  function onPointerCancel() {
+    setDialAnchor(null); setArmedKey(null); armedRef.current = null
+    anchorRef.current = null
   }
 
-  const so = getStrokesOnHole(effectiveStrokes[player.id] || 0, hole.stroke_index, holesCount)
   const grossNum = parseInt(val, 10)
   const netDiff = !Number.isNaN(grossNum) ? (grossNum - so - hole.par) : null
   const tone =
@@ -1346,50 +1394,75 @@ function ScoreCell({ round, hole, player, mine, enteredBy, effectiveStrokes, hol
                                  'var(--tt-score-double)'
   const decorate = netDiff != null && netDiff <= -1 && val !== ''
 
+  const cellBorder = error ? 'var(--tt-pencil)' : (mine ? 'var(--tt-fairway)' : 'transparent')
+  const cellBg = mine ? 'rgba(220, 232, 210, 0.4)' : 'transparent'
+
   return (
     <td style={{ ...cellTd, position: 'relative' }}>
       <div
-        ref={wrapRef}
-        onPointerDown={startPress}
-        onPointerUp={cancelPress}
-        onPointerCancel={cancelPress}
-        onPointerLeave={cancelPress}
-        onContextMenu={e => { e.preventDefault() }}
         style={{
           position: 'relative',
           display: 'inline-block',
           width: 44,
           height: 34,
           verticalAlign: 'middle',
-          WebkitTouchCallout: 'none',
-          touchAction: 'manipulation',
-      }}>
-        <input
-          ref={inputRef}
-          inputMode="numeric"
-          value={val}
-          onChange={e => setVal(e.target.value.replace(/[^\d]/g, '').slice(0, 2))}
-          onBlur={commit}
-          onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
-          style={{
-            position: 'absolute',
-            inset: 0,
-            width: '100%',
-            height: '100%',
-            textAlign: 'center',
-            padding: 0,
-            border: '1px solid ' + (error ? 'var(--tt-pencil)' : (mine ? 'var(--tt-fairway)' : 'transparent')),
-            background: mine ? 'rgba(220, 232, 210, 0.4)' : 'transparent',
-            borderRadius: 6,
-            font: 'inherit',
-            fontFamily: 'var(--tt-font-mono)',
-            fontWeight: tone && netDiff !== 0 ? 700 : 500,
-            color: tone || 'var(--tt-ink)',
-            outline: 'none',
-            fontSize: 16,
-            opacity: saving ? 0.6 : 1,
-          }}
-        />
+        }}
+      >
+        {typing ? (
+          <input
+            ref={inputRef}
+            inputMode="numeric"
+            value={val}
+            onChange={e => setVal(e.target.value.replace(/[^\d]/g, '').slice(0, 2))}
+            onBlur={commitTyped}
+            onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
+            style={{
+              position: 'absolute', inset: 0,
+              width: '100%', height: '100%',
+              textAlign: 'center', padding: 0,
+              border: `1px solid ${cellBorder}`,
+              background: cellBg,
+              borderRadius: 6,
+              font: 'inherit', fontFamily: 'var(--tt-font-mono)',
+              fontWeight: tone && netDiff !== 0 ? 700 : 500,
+              color: tone || 'var(--tt-ink)',
+              outline: 'none', fontSize: 16,
+              opacity: saving ? 0.6 : 1,
+            }}
+          />
+        ) : (
+          <div
+            ref={cellRef}
+            role="button"
+            tabIndex={0}
+            aria-label={`Score for hole ${hole.hole}, ${player.name}`}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerCancel}
+            onContextMenu={e => e.preventDefault()}
+            style={{
+              position: 'absolute', inset: 0,
+              width: '100%', height: '100%',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              border: `1px solid ${cellBorder}`,
+              background: cellBg,
+              borderRadius: 6,
+              fontFamily: 'var(--tt-font-mono)',
+              fontWeight: tone && netDiff !== 0 ? 700 : 500,
+              color: val === '' ? 'var(--tt-line)' : (tone || 'var(--tt-ink)'),
+              fontSize: 16,
+              opacity: saving ? 0.6 : 1,
+              touchAction: 'none',
+              userSelect: 'none', WebkitUserSelect: 'none',
+              WebkitTouchCallout: 'none',
+              WebkitTapHighlightColor: 'transparent',
+              cursor: 'pointer',
+            }}
+          >
+            {val === '' ? '·' : val}
+          </div>
+        )}
         {decorate && (
           <svg
             style={{ position: 'absolute', inset: -4, pointerEvents: 'none', overflow: 'visible' }}
@@ -1423,22 +1496,11 @@ function ScoreCell({ round, hole, player, mine, enteredBy, effectiveStrokes, hol
           anchorRect={dialAnchor}
           par={hole.par}
           strokesOnHole={so}
-          onPick={async n => {
-            setDialAnchor(null)
-            setVal(String(n))
-            await writeScore(n)
-          }}
-          onClear={async () => {
-            setDialAnchor(null)
-            setVal('')
-            await writeScore(null)
-          }}
-          onType={() => {
-            setDialAnchor(null)
-            // Defer focus so the dial unmounts before the keyboard opens.
-            requestAnimationFrame(() => inputRef.current?.focus())
-          }}
-          onClose={() => setDialAnchor(null)}
+          armedKey={armedKey}
+          onPick={n => { setVal(String(n)); writeScore(n); setDialAnchor(null) }}
+          onClear={() => { setVal(''); writeScore(null); setDialAnchor(null) }}
+          onType={() => { setDialAnchor(null); setTyping(true) }}
+          onClose={() => { setDialAnchor(null); setArmedKey(null); armedRef.current = null }}
         />
       )}
     </td>
