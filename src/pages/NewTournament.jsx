@@ -15,10 +15,9 @@ export default function NewTournament() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
 
-  // Step 1 — title / slug
+  // Step 1 — title (slug derives automatically; user never sees it)
   const [title, setTitle] = useState('')
   const [slug, setSlug] = useState('')
-  const [slugTouched, setSlugTouched] = useState(false)
 
   // Step 2 — count
   const [playerCount, setPlayerCount] = useState(6)
@@ -42,7 +41,7 @@ export default function NewTournament() {
 
   function onTitleChange(t) {
     setTitle(t)
-    if (!slugTouched) setSlug(slugify(t))
+    setSlug(slugify(t))
   }
 
   function applyCount(n) {
@@ -104,8 +103,7 @@ export default function NewTournament() {
 
   function validate() {
     if (step === 1) {
-      if (!title.trim()) return 'Give the tournament a title.'
-      if (!/^[a-z0-9-]{3,40}$/.test(slug)) return 'URL slug must be 3–40 chars, lowercase letters, numbers, dashes.'
+      if (!title.trim() || title.trim().length < 2) return 'Give the trip a name.'
     }
     if (step === 2) {
       if (!playerCount || playerCount < 2) return 'Need at least 2 players.'
@@ -127,6 +125,12 @@ export default function NewTournament() {
     setError(null)
     setSubmitting(true)
     try {
+      // Sanitize slug — fall back to a random one if title slugifies to
+      // something the DB regex (^[a-z0-9-]{3,40}$) won't accept.
+      let finalSlug = slug
+      if (!/^[a-z0-9-]{3,40}$/.test(finalSlug)) {
+        finalSlug = `trip-${randomSuffix(6)}`
+      }
       const finalPlayers = players
         .filter(p => p.name.trim())
         .map((p, i) => ({
@@ -139,7 +143,7 @@ export default function NewTournament() {
         }))
       const championship = rounds.find(r => r.is_championship)
       const config = {
-        slug,
+        slug: finalSlug,
         title: title.trim(),
         num_groups: derivedPreset.num_groups,
         championship_tier_size: derivedPreset.championship_tier_size,
@@ -156,7 +160,7 @@ export default function NewTournament() {
       const { data, error: rpcError } = await supabase.rpc('rpc_create_tournament', { config })
       if (rpcError) {
         if (/duplicate key|unique constraint/i.test(rpcError.message)) {
-          config.slug = `${slug}-${randomSuffix()}`
+          config.slug = `${finalSlug}-${randomSuffix()}`
           const retry = await supabase.rpc('rpc_create_tournament', { config })
           if (retry.error) throw retry.error
           nav(`/t/${retry.data.slug}`)
@@ -206,7 +210,7 @@ export default function NewTournament() {
 
       <Card>
         <div className="stack">
-          {step === 1 && <Step1 {...{ title, onTitleChange, slug, setSlug, setSlugTouched }} />}
+          {step === 1 && <Step1 {...{ title, onTitleChange }} />}
           {step === 2 && <Step2 {...{ playerCount, otherMode, setOtherMode, applyCount, derivedPreset }} />}
           {step === 3 && <Step3 {...{ players, updatePlayer, addPlayer, removePlayer }} />}
           {step === 4 && <Step4 {...{ rounds, setRoundCount, updateRound, toggleChampionship }} />}
@@ -226,30 +230,20 @@ export default function NewTournament() {
   )
 }
 
-function Step1({ title, onTitleChange, slug, setSlug, setSlugTouched }) {
+function Step1({ title, onTitleChange }) {
   return (
     <div className="stack">
       <h2 style={{ fontSize: 'var(--tt-text-lg)', margin: 0, fontFamily: 'var(--tt-font-display)' }}>
         What's the trip called?
       </h2>
       <label className="stack--tight">
-        <span className="tt-eyebrow">Title</span>
+        <span className="tt-eyebrow">Trip name</span>
         <input
           autoFocus
           value={title}
           placeholder="Bama Golf Trip 2026"
           onChange={e => onTitleChange(e.target.value)}
         />
-      </label>
-      <label className="stack--tight">
-        <span className="tt-eyebrow">URL slug</span>
-        <input
-          value={slug}
-          onChange={e => { setSlugTouched(true); setSlug(e.target.value.toLowerCase()) }}
-        />
-        <span className="tt-xs tt-muted">
-          tee-trip-one.vercel.app/t/<strong>{slug || '…'}</strong>
-        </span>
       </label>
     </div>
   )
