@@ -8,7 +8,11 @@ import { Shell, Header, Card, Button } from '../components/ui.jsx'
 
 const TOTAL_STEPS = 5
 const PRESET_COUNTS = [4, 6, 8, 12]
-const DEFAULT_FORMATS = ['individual_stroke', 'best_ball', 'scramble', 'championship']
+const ROUND_COUNT_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8]
+const DEFAULT_PLAYER_COUNT = 8
+const DEFAULT_ROUND_COUNT = 3
+
+const TILE_BY_VALUE = Object.fromEntries(ROUND_FORMAT_TILES.map(t => [t.value, t]))
 
 export default function NewTournament() {
   const nav = useNavigate()
@@ -16,17 +20,21 @@ export default function NewTournament() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
 
-  // Step 1 — group size
-  const [playerCount, setPlayerCount] = useState(6)
+  // Step 1 — group size + round count
+  const [playerCount, setPlayerCount] = useState(DEFAULT_PLAYER_COUNT)
   const [otherMode, setOtherMode] = useState(false)
+  const [roundCount, setRoundCount] = useState(DEFAULT_ROUND_COUNT)
 
   // Step 2 — players (all optional)
   const [players, setPlayers] = useState(() =>
-    Array.from({ length: 6 }, (_, i) => defaultPlayer(i))
+    Array.from({ length: DEFAULT_PLAYER_COUNT }, (_, i) => defaultPlayer(i))
   )
 
-  // Step 3 — round formats picked, in order
-  const [selectedFormats, setSelectedFormats] = useState(() => [...DEFAULT_FORMATS])
+  // Step 3 — round formats picked, in order. Default seed:
+  // all stroke play except a championship final if there are 2+ rounds.
+  const [selectedFormats, setSelectedFormats] = useState(() =>
+    seedFormatsFor(DEFAULT_ROUND_COUNT)
+  )
 
   // Step 4 — trip name (slug derives silently)
   const [title, setTitle] = useState('')
@@ -52,6 +60,23 @@ export default function NewTournament() {
     })
   }
 
+  function applyRoundCount(n) {
+    const clamped = Math.max(1, Math.min(12, n | 0))
+    setRoundCount(clamped)
+    // Truncate selectedFormats to match; pad with stroke play if too few
+    setSelectedFormats(prev => {
+      if (prev.length === clamped) return prev
+      if (prev.length > clamped) {
+        return prev.slice(0, clamped)
+      }
+      const next = [...prev]
+      while (next.length < clamped) {
+        next.push(next.length === clamped - 1 && clamped >= 2 ? 'championship' : 'individual_stroke')
+      }
+      return moveChampionshipLast(next)
+    })
+  }
+
   function updatePlayer(i, patch) {
     setPlayers(arr => arr.map((p, j) => j === i ? { ...p, ...patch } : p))
   }
@@ -70,18 +95,14 @@ export default function NewTournament() {
     })
   }
 
-  // Toggle a format on/off. Champion always sits at the end.
-  function toggleFormat(value) {
+  function addFormat(value) {
     setSelectedFormats(prev => {
-      const has = prev.includes(value)
-      if (has) return prev.filter(v => v !== value)
-      if (value === 'championship') return [...prev, value]
-      const champIdx = prev.indexOf('championship')
-      if (champIdx >= 0) {
-        return [...prev.slice(0, champIdx), value, ...prev.slice(champIdx)]
-      }
-      return [...prev, value]
+      if (prev.length >= roundCount) return prev
+      return moveChampionshipLast([...prev, value])
     })
+  }
+  function removeFormatAt(index) {
+    setSelectedFormats(prev => prev.filter((_, i) => i !== index))
   }
 
   // Round objects derived from the selected formats.
@@ -100,12 +121,12 @@ export default function NewTournament() {
     if (step === 1) {
       if (!playerCount || playerCount < 2) return 'Need at least 2 players.'
       if (playerCount > 24) return 'Max 24 players.'
-    }
-    if (step === 2) {
-      // Names optional, no validation
+      if (!roundCount || roundCount < 1) return 'Pick at least one round.'
     }
     if (step === 3) {
-      if (selectedFormats.length < 1) return 'Pick at least one round format.'
+      if (selectedFormats.length !== roundCount) {
+        return `Pick a format for each of the ${roundCount} round${roundCount === 1 ? '' : 's'}.`
+      }
     }
     if (step === 4) {
       if (!title.trim() || title.trim().length < 2) return 'Give the trip a name.'
@@ -122,7 +143,6 @@ export default function NewTournament() {
         finalSlug = `trip-${randomSuffix(6)}`
       }
 
-      // Default name "Player N" for any blank rows so the DB has unique slugs.
       const finalPlayers = players.map((p, i) => {
         const name = p.name.trim() || `Player ${i + 1}`
         const baseSlug = slugify(p.slug || name)
@@ -135,7 +155,6 @@ export default function NewTournament() {
           display_order: i,
         }
       })
-      // De-dup slugs (e.g. two "Player 1" rows produce same slug).
       const seen = new Set()
       for (const p of finalPlayers) {
         let candidate = p.slug
@@ -189,6 +208,12 @@ export default function NewTournament() {
     else next()
   }
 
+  // "Add later" on step 2 — advance with no edits.
+  function skipPlayers() {
+    setError(null)
+    setStep(3)
+  }
+
   return (
     <Shell>
       <Link
@@ -217,19 +242,37 @@ export default function NewTournament() {
 
       <Card>
         <div className="stack">
-          {step === 1 && <Step1 {...{ playerCount, otherMode, setOtherMode, applyCount, derivedPreset }} />}
-          {step === 2 && <Step2 {...{ players, updatePlayer, addPlayer, removePlayer }} />}
-          {step === 3 && <Step3 {...{ selectedFormats, toggleFormat }} />}
+          {step === 1 && (
+            <Step1 {...{
+              playerCount, otherMode, setOtherMode, applyCount, derivedPreset,
+              roundCount, applyRoundCount,
+            }} />
+          )}
+          {step === 2 && (
+            <Step2 {...{ players, updatePlayer, addPlayer, removePlayer }} />
+          )}
+          {step === 3 && (
+            <Step3 {...{
+              selectedFormats, roundCount, addFormat, removeFormatAt,
+            }} />
+          )}
           {step === 4 && <Step4 {...{ title, onTitleChange }} />}
           {step === 5 && <Step5 {...{ title, slug, players, derivedPreset, rounds }} />}
 
           {error && <p style={{ color: 'var(--tt-pencil)' }} className="tt-small">{error}</p>}
 
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', flexWrap: 'wrap' }}>
             <Button variant="ghost" onClick={back} disabled={step === 1 || submitting}>Back</Button>
-            <Button onClick={handleNext} disabled={submitting}>
-              {step === TOTAL_STEPS ? (submitting ? 'Creating…' : 'Create tournament') : 'Next'}
-            </Button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {step === 2 && (
+                <Button variant="ghost" onClick={skipPlayers} disabled={submitting}>
+                  Add later
+                </Button>
+              )}
+              <Button onClick={handleNext} disabled={submitting}>
+                {step === TOTAL_STEPS ? (submitting ? 'Creating…' : 'Create tournament') : 'Next'}
+              </Button>
+            </div>
           </div>
         </div>
       </Card>
@@ -237,8 +280,11 @@ export default function NewTournament() {
   )
 }
 
-// ── Step 1 — group size ──────────────────────────────────────
-function Step1({ playerCount, otherMode, setOtherMode, applyCount, derivedPreset }) {
+// ── Step 1 — group size + round count ────────────────────────
+function Step1({
+  playerCount, otherMode, setOtherMode, applyCount, derivedPreset,
+  roundCount, applyRoundCount,
+}) {
   return (
     <div className="stack">
       <h2 style={{ fontSize: 'var(--tt-text-lg)', margin: 0, fontFamily: 'var(--tt-font-display)' }}>
@@ -302,6 +348,44 @@ function Step1({ playerCount, otherMode, setOtherMode, applyCount, derivedPreset
         </label>
       </div>
 
+      <div style={{ borderTop: '1px solid var(--tt-line)', paddingTop: 16, marginTop: 4 }}>
+        <h2 style={{
+          fontSize: 'var(--tt-text-lg)',
+          margin: '0 0 8px',
+          fontFamily: 'var(--tt-font-display)',
+        }}>
+          How many rounds?
+        </h2>
+        <p className="tt-small tt-muted" style={{ margin: '0 0 10px' }}>
+          One round per day of golf you'll be playing.
+        </p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {ROUND_COUNT_OPTIONS.map(n => {
+            const active = roundCount === n
+            return (
+              <button
+                key={n}
+                type="button"
+                onClick={() => applyRoundCount(n)}
+                style={{
+                  minWidth: 44,
+                  padding: '.55rem .9rem',
+                  borderRadius: 10,
+                  border: `1px solid ${active ? 'var(--tt-fairway)' : 'var(--tt-line)'}`,
+                  background: active ? 'var(--tt-fairway)' : 'var(--tt-paper)',
+                  color: active ? '#fff' : 'var(--tt-ink)',
+                  fontFamily: 'var(--tt-font-mono)',
+                  fontWeight: 600,
+                  fontSize: 15,
+                  cursor: 'pointer',
+                  transition: 'background 150ms linear, color 150ms linear',
+                }}
+              >{n}</button>
+            )
+          })}
+        </div>
+      </div>
+
       <p className="tt-xs tt-muted" style={{ margin: 0 }}>
         Scoring: {derivedPreset.num_groups} groups, championship tier of {derivedPreset.championship_tier_size}.
       </p>
@@ -317,8 +401,9 @@ function Step2({ players, updatePlayer, addPlayer, removePlayer }) {
         Add players
       </h2>
       <p className="tt-small tt-muted" style={{ margin: 0 }}>
-        Names are optional — leave blank to fill in later from settings. If you add an email,
-        we'll auto-link that player when they sign in with Google or Apple.
+        Names are optional — hit <strong>Add later</strong> to skip and fill them in from
+        settings. If you put an email here, that player auto-links when they sign in with
+        Google or Apple.
       </p>
 
       <div className="stack--tight">
@@ -333,10 +418,7 @@ function Step2({ players, updatePlayer, addPlayer, removePlayer }) {
               maxLength={4}
               onChange={e => updatePlayer(i, { emoji: e.target.value })}
               aria-label="Emoji"
-              style={{
-                textAlign: 'center', padding: '.4em .2em',
-                fontSize: 18,
-              }}
+              style={{ textAlign: 'center', padding: '.4em .2em', fontSize: 18 }}
             />
             <input
               placeholder={`Player ${i + 1}`}
@@ -377,26 +459,46 @@ function Step2({ players, updatePlayer, addPlayer, removePlayer }) {
 }
 
 // ── Step 3 — round format tiles ──────────────────────────────
-function Step3({ selectedFormats, toggleFormat }) {
+function Step3({ selectedFormats, roundCount, addFormat, removeFormatAt }) {
+  const positions = useMemo(() => {
+    const map = {}
+    selectedFormats.forEach((fmt, i) => {
+      if (!map[fmt]) map[fmt] = []
+      map[fmt].push(i + 1)
+    })
+    return map
+  }, [selectedFormats])
+
+  const filled = selectedFormats.length
+  const remaining = roundCount - filled
+  const atCap = filled >= roundCount
+
   return (
     <div className="stack">
       <h2 style={{ fontSize: 'var(--tt-text-lg)', margin: 0, fontFamily: 'var(--tt-font-display)' }}>
         Pick your rounds
       </h2>
       <p className="tt-small tt-muted" style={{ margin: 0 }}>
-        Tap a format to add it as the next round. Tap again to remove. The number on each tile
-        shows the round order. Championship always plays last.
+        Tap a format to add it as the next round. You can pick the same format more than
+        once (e.g. two stroke-play days). Championship always plays last.
+      </p>
+      <p className="tt-small" style={{ margin: 0, color: 'var(--tt-ink-soft)' }}>
+        <strong>{filled}</strong> of <strong>{roundCount}</strong> picked
+        {remaining > 0 && ` · ${remaining} to go`}
+        {atCap && ' · all set'}
       </p>
 
       <div style={{ display: 'grid', gap: 10 }}>
         {ROUND_FORMAT_TILES.map(tile => {
-          const idx = selectedFormats.indexOf(tile.value)
-          const selected = idx !== -1
+          const tilePositions = positions[tile.value] || []
+          const count = tilePositions.length
+          const selected = count > 0
           return (
             <button
               key={tile.value}
               type="button"
-              onClick={() => toggleFormat(tile.value)}
+              onClick={() => addFormat(tile.value)}
+              disabled={atCap}
               style={{
                 position: 'relative',
                 textAlign: 'left',
@@ -404,19 +506,21 @@ function Step3({ selectedFormats, toggleFormat }) {
                 border: `1px solid ${selected ? 'var(--tt-fairway)' : 'var(--tt-line)'}`,
                 background: selected ? 'var(--tt-fairway-tint)' : 'var(--tt-paper)',
                 borderRadius: 12,
-                cursor: 'pointer',
+                cursor: atCap ? 'not-allowed' : 'pointer',
+                opacity: atCap && !selected ? 0.55 : 1,
                 fontFamily: 'inherit',
-                transition: 'background 150ms linear, border-color 150ms linear',
+                transition: 'background 150ms linear, border-color 150ms linear, opacity 150ms linear',
               }}
             >
               {selected && (
                 <span
-                  aria-label={`Round ${idx + 1}`}
+                  aria-label={`Selected as round ${tilePositions.join(', ')}`}
                   style={{
                     position: 'absolute',
                     top: 10, left: 10,
-                    width: 24, height: 24,
-                    borderRadius: '50%',
+                    minWidth: 24, height: 24,
+                    padding: '0 7px',
+                    borderRadius: 999,
                     background: 'var(--tt-fairway)',
                     color: '#fff',
                     fontFamily: 'var(--tt-font-mono)',
@@ -426,9 +530,9 @@ function Step3({ selectedFormats, toggleFormat }) {
                     alignItems: 'center',
                     justifyContent: 'center',
                   }}
-                >{idx + 1}</span>
+                >{count === 1 ? tilePositions[0] : `×${count}`}</span>
               )}
-              <div style={{ paddingLeft: selected ? 32 : 0 }}>
+              <div style={{ paddingLeft: selected ? 36 : 0 }}>
                 <div style={{
                   fontFamily: 'var(--tt-font-display)',
                   fontSize: 'var(--tt-text-lg)',
@@ -448,16 +552,43 @@ function Step3({ selectedFormats, toggleFormat }) {
         })}
       </div>
 
+      {/* Round order — remove a slot to renumber */}
       {selectedFormats.length > 0 && (
-        <p className="tt-small" style={{ margin: 0, color: 'var(--tt-ink-soft)' }}>
-          <strong>{selectedFormats.length} round{selectedFormats.length === 1 ? '' : 's'}:</strong>{' '}
-          {selectedFormats.map((f, i) => (
-            <span key={f}>
-              {i > 0 && ' · '}
-              {i + 1}. {ROUND_FORMAT_TILES.find(t => t.value === f)?.title}
-            </span>
+        <div className="stack--tight">
+          <div className="tt-eyebrow">Round order</div>
+          {selectedFormats.map((fmt, i) => (
+            <div
+              key={i}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '8px 12px',
+                background: 'var(--tt-cream-deep)',
+                borderRadius: 8,
+              }}
+            >
+              <span className="tt-small">
+                <strong style={{ fontFamily: 'var(--tt-font-mono)' }}>R{i + 1}</strong>
+                {'  '}—{'  '}
+                {TILE_BY_VALUE[fmt]?.title ?? fmt}
+              </span>
+              <button
+                type="button"
+                onClick={() => removeFormatAt(i)}
+                aria-label={`Remove round ${i + 1}`}
+                style={{
+                  width: 26, height: 26, padding: 0,
+                  border: '1px solid var(--tt-line)',
+                  borderRadius: 6,
+                  background: 'transparent',
+                  color: 'var(--tt-ink-muted)',
+                  cursor: 'pointer',
+                }}
+              >✕</button>
+            </div>
           ))}
-        </p>
+        </div>
       )}
     </div>
   )
@@ -501,7 +632,7 @@ function Step5({ title, slug, players, derivedPreset, rounds }) {
         } />
         <Row k="Groups" v={String(derivedPreset.num_groups)} />
         <Row k="Championship tier" v={String(derivedPreset.championship_tier_size)} />
-        <Row k="Rounds" v={`${rounds.length}: ${rounds.map(r => r.format.replace('_', ' ')).join(', ')}`} />
+        <Row k="Rounds" v={`${rounds.length}: ${rounds.map(r => TILE_BY_VALUE[r.format]?.title ?? r.format).join(', ')}`} />
       </dl>
       <p className="tt-xs tt-muted" style={{ margin: 0 }}>
         You can edit any of this from tournament settings after creation.
@@ -523,4 +654,19 @@ function deriveInitials(name) {
   if (!name) return ''
   const parts = name.trim().split(/\s+/)
   return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase().slice(0, 3)
+}
+
+// Make sure 'championship' is always the last entry in the array.
+function moveChampionshipLast(arr) {
+  const champIdx = arr.indexOf('championship')
+  if (champIdx === -1 || champIdx === arr.length - 1) return arr
+  return [...arr.slice(0, champIdx), ...arr.slice(champIdx + 1), 'championship']
+}
+
+function seedFormatsFor(n) {
+  const out = []
+  for (let i = 0; i < n; i++) {
+    out.push(i === n - 1 && n >= 2 ? 'championship' : 'individual_stroke')
+  }
+  return out
 }
