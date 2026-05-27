@@ -7,6 +7,7 @@ import {
   computeSkinsForTournament, isSkinsEligible,
   computeNassauForTournament, isNassauEligible,
   computeVegasForTournament,
+  computeBBBForTournament,
 } from '../lib/scoring.js'
 import { Shell, Header, Card, Chip, PlayerAvatar } from '../components/ui.jsx'
 
@@ -198,7 +199,7 @@ function RoundsList({ rounds, holes }) {
   )
 }
 
-function SideGamesBoard({ players, rounds, holes, scores, roundStrokes }) {
+function SideGamesBoard({ players, rounds, holes, scores, roundStrokes, holeEvents }) {
   const playerMap = useMemo(
     () => Object.fromEntries(players.map(p => [p.id, p])),
     [players]
@@ -209,7 +210,46 @@ function SideGamesBoard({ players, rounds, holes, scores, roundStrokes }) {
       <SkinsSection {...{ players, rounds, holes, scores, roundStrokes, playerMap }} />
       <NassauSection {...{ players, rounds, holes, scores, roundStrokes, playerMap }} />
       <VegasSection {...{ rounds, holes, scores, roundStrokes, playerMap }} />
+      <BBBSection {...{ players, rounds, holeEvents, playerMap }} />
     </div>
+  )
+}
+
+function BBBSection({ players, rounds, holeEvents, playerMap }) {
+  const { totals } = useMemo(
+    () => computeBBBForTournament({ players, rounds, holeEvents: holeEvents ?? [] }),
+    [players, rounds, holeEvents]
+  )
+  const rows = useMemo(() => Object.entries(totals)
+    .map(([pid, n]) => ({ player: playerMap[pid], total: n }))
+    .filter(r => r.player)
+    .sort((a, b) => b.total - a.total)
+  , [totals, playerMap])
+  const hasAny = rows.some(r => r.total > 0)
+
+  return (
+    <Card padded={false} style={{ overflow: 'hidden' }}>
+      <SectionHeader
+        title="Bingo Bango Bongo"
+        sub={hasAny
+          ? 'Manually awarded · 3 events per hole'
+          : 'No events recorded yet — open a round to assign them.'}
+      />
+      {hasAny && (
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              <th style={sgTh} className="tt-eyebrow">#</th>
+              <th style={sgTh} className="tt-eyebrow">Player</th>
+              <th style={{ ...sgTh, textAlign: 'right' }} className="tt-eyebrow">Points</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => <LeaderRow key={row.player.id} row={row} rank={i + 1} />)}
+          </tbody>
+        </table>
+      )}
+    </Card>
   )
 }
 

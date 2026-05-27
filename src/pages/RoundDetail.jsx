@@ -8,6 +8,7 @@ import {
   computeSkinsForRound, isSkinsEligible,
   computeNassauForRound, isNassauEligible,
   computeVegasForRound,
+  computeBBBForRound, BBB_EVENT_TYPES,
 } from '../lib/scoring.js'
 import { Shell, Header, Card, Button, Chip, PencilFilters } from '../components/ui.jsx'
 
@@ -111,8 +112,227 @@ export default function RoundDetail() {
         scores={roundScores}
         roundStrokes={roundStrokes}
       />
+
+      <BBBPanel
+        round={round}
+        tournamentId={t.tournament.id}
+        players={t.players}
+        holes={roundHoles}
+        holeEvents={t.holeEvents ?? []}
+        onChange={t.refetch}
+      />
     </Shell>
   )
+}
+
+// ── Bingo Bango Bongo panel (per round) ──────────────────────
+function BBBPanel({ round, tournamentId, players, holes, holeEvents, onChange }) {
+  const [editing, setEditing] = useState(false)
+  const playerMap = useMemo(
+    () => Object.fromEntries(players.map(p => [p.id, p])),
+    [players]
+  )
+  const { totals, byHole } = useMemo(
+    () => computeBBBForRound({ round, players, holeEvents }),
+    [round, players, holeEvents]
+  )
+  const standings = useMemo(() => Object.entries(totals)
+    .map(([pid, n]) => ({ player: playerMap[pid], total: n }))
+    .filter(r => r.player)
+    .sort((a, b) => b.total - a.total)
+  , [totals, playerMap])
+
+  const sortedHoles = useMemo(
+    () => [...holes].sort((a, b) => a.hole - b.hole),
+    [holes]
+  )
+
+  async function setEvent(hole, eventType, playerId) {
+    if (!playerId) {
+      const { error } = await supabase
+        .from('hole_events')
+        .delete()
+        .eq('round_id', round.id)
+        .eq('hole', hole)
+        .eq('event_type', eventType)
+      if (error) { alert(error.message); return }
+    } else {
+      const { error } = await supabase
+        .from('hole_events')
+        .upsert(
+          { round_id: round.id, tournament_id: tournamentId, hole, player_id: playerId, event_type: eventType },
+          { onConflict: 'round_id,hole,event_type' }
+        )
+      if (error) { alert(error.message); return }
+    }
+    onChange?.()
+  }
+
+  const hasAny = standings.some(s => s.total > 0)
+
+  return (
+    <>
+      <h2 style={{
+        fontFamily: 'var(--tt-font-display)',
+        fontSize: 'var(--tt-text-lg)',
+        margin: '20px 0 10px',
+      }}>Bingo Bango Bongo</h2>
+
+      <Card>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+          <p className="tt-xs tt-muted" style={{ margin: 0, maxWidth: '60%' }}>
+            Tap an event cell to assign it: first on green / closest to pin / first in hole.
+          </p>
+          <Button variant="ghost" size="sm" onClick={() => setEditing(e => !e)}>
+            {editing ? 'Done' : 'Edit'}
+          </Button>
+        </div>
+
+        {/* Standings */}
+        {hasAny ? (
+          <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 14px' }}>
+            {standings.map((row, i) => (
+              <li
+                key={row.player.id}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  padding: '6px 0',
+                  borderTop: i === 0 ? 'none' : '1px solid var(--tt-line)',
+                }}
+              >
+                <span className="tt-small">
+                  <span style={{ marginRight: 6 }}>{row.player.emoji}</span>
+                  {row.player.name}
+                </span>
+                <span style={{ fontFamily: 'var(--tt-font-mono)', fontWeight: 700 }}>
+                  {row.total}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="tt-small tt-muted" style={{ margin: '0 0 14px' }}>
+            No events awarded yet.
+          </p>
+        )}
+
+        {editing && (
+          <div className="stack--tight">
+            <div className="tt-eyebrow">Award events</div>
+            <div style={{
+              overflowX: 'auto',
+              border: '1px solid var(--tt-line)',
+              borderRadius: 8,
+            }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 480 }}>
+                <thead>
+                  <tr>
+                    <th style={bbbTh}>Hole</th>
+                    <th style={bbbTh}>Par</th>
+                    <th style={bbbTh}>Bingo</th>
+                    <th style={bbbTh}>Bango</th>
+                    <th style={bbbTh}>Bongo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedHoles.map(h => (
+                    <tr key={h.hole} style={{ borderTop: '1px solid var(--tt-line)' }}>
+                      <td style={bbbTd}>{h.hole}</td>
+                      <td style={{ ...bbbTd, color: 'var(--tt-ink-muted)' }}>{h.par}</td>
+                      {BBB_EVENT_TYPES.map(et => (
+                        <td key={et} style={bbbTd}>
+                          <select
+                            value={byHole[h.hole]?.[et] ?? ''}
+                            onChange={e => setEvent(h.hole, et, e.target.value || null)}
+                            style={{
+                              fontFamily: 'inherit',
+                              fontSize: 13,
+                              padding: '4px 6px',
+                              border: '1px solid var(--tt-line)',
+                              borderRadius: 6,
+                              background: 'var(--tt-paper)',
+                              width: '100%',
+                              minWidth: 110,
+                            }}
+                          >
+                            <option value="">—</option>
+                            {players.map(p => (
+                              <option key={p.id} value={p.id}>
+                                {p.emoji} {p.name}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {!editing && hasAny && (
+          <>
+            <div className="tt-eyebrow" style={{ marginBottom: 6 }}>Hole by hole</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {sortedHoles.map(h => (
+                <BBBHolePill key={h.hole} hole={h.hole} events={byHole[h.hole]} playerMap={playerMap} />
+              ))}
+            </div>
+          </>
+        )}
+      </Card>
+    </>
+  )
+}
+
+function BBBHolePill({ hole, events, playerMap }) {
+  const count = events ? Object.keys(events).length : 0
+  if (count === 0) {
+    return (
+      <span style={{ ...bbbPillBase, color: 'var(--tt-ink-muted)', opacity: 0.4 }}>
+        {hole}
+      </span>
+    )
+  }
+  return (
+    <span style={{ ...bbbPillBase, background: 'var(--tt-fairway-tint)', color: 'var(--tt-fairway-deep)' }}>
+      <span style={{ fontFamily: 'var(--tt-font-mono)' }}>{hole}</span>
+      {' '}
+      {BBB_EVENT_TYPES.map(et => events[et] ? playerMap[events[et]]?.emoji ?? '⛳' : null)
+        .filter(Boolean)
+        .join('')}
+    </span>
+  )
+}
+
+const bbbPillBase = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: '4px 8px',
+  borderRadius: 8,
+  fontFamily: 'var(--tt-font-ui)',
+  fontSize: 12,
+  fontWeight: 600,
+  border: '1px solid var(--tt-line)',
+}
+const bbbTh = {
+  padding: '6px 8px',
+  background: 'var(--tt-fairway)',
+  color: '#fff',
+  textAlign: 'center',
+  fontWeight: 600,
+  fontSize: 11,
+  letterSpacing: '0.1em',
+  textTransform: 'uppercase',
+}
+const bbbTd = {
+  padding: '4px 6px',
+  fontSize: 13,
+  textAlign: 'center',
+  fontFamily: 'var(--tt-font-mono)',
 }
 
 // ── Nassau panel (per round) ─────────────────────────────────

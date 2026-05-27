@@ -673,6 +673,50 @@ export function computeVegasForTournament({ rounds, holes, scores, roundStrokes 
   return { byRound }
 }
 
+// ----- Bingo Bango Bongo side game.
+// Three subjectively-awarded points per hole that observers track
+// during play (not derivable from stroke counts):
+//   bingo = first ball on the green
+//   bango = closest to the pin once everyone's on the green
+//   bongo = first ball in the hole
+// Each event = 1 point. Highest total wins. Data comes from the
+// hole_events table, populated by the per-round BBB panel.
+//
+// Eligibility: any round format.
+
+export const BBB_EVENT_TYPES = ['bingo', 'bango', 'bongo']
+
+export const BBB_EVENT_LABELS = {
+  bingo: 'Bingo — first on green',
+  bango: 'Bango — closest to pin',
+  bongo: 'Bongo — first in hole',
+}
+
+export function computeBBBForRound({ round, players, holeEvents }) {
+  const totals = Object.fromEntries(players.map(p => [p.id, 0]))
+  const byHole = {}
+  for (const e of holeEvents || []) {
+    if (e.round_id !== round.id) continue
+    totals[e.player_id] = (totals[e.player_id] || 0) + 1
+    if (!byHole[e.hole]) byHole[e.hole] = {}
+    byHole[e.hole][e.event_type] = e.player_id
+  }
+  return { totals, byHole }
+}
+
+export function computeBBBForTournament({ players, rounds, holeEvents }) {
+  const totals = Object.fromEntries(players.map(p => [p.id, 0]))
+  const byRound = {}
+  for (const r of rounds) {
+    const result = computeBBBForRound({ round: r, players, holeEvents })
+    byRound[r.id] = result
+    for (const [pid, n] of Object.entries(result.totals)) {
+      totals[pid] = (totals[pid] || 0) + n
+    }
+  }
+  return { totals, byRound }
+}
+
 // ----- Full tournament leaderboard.
 export function computeLeaderboard({
   players, rounds, holes, scores, roundStrokes, scoringConfig, championshipTierSize,

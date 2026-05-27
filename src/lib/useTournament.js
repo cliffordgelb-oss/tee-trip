@@ -15,6 +15,7 @@ export function useTournament(slug) {
     roundStrokes: [],
     messages: [],
     members: [],
+    holeEvents: [],
   })
   const channelRef = useRef(null)
 
@@ -41,6 +42,11 @@ export function useTournament(slug) {
     const firstErr = [players, rounds, holes, scores, roundStrokes, messages, members].find(r => r.error)
     if (firstErr) { setState(s => ({ ...s, loading: false, error: firstErr.error.message })); return }
 
+    // hole_events is newer — soft-fail so a DB that hasn't been migrated
+    // yet still loads the tournament view.
+    const holeEventsResult = await supabase.from('hole_events').select('*').eq('tournament_id', tid)
+    const holeEvents = holeEventsResult.error ? [] : (holeEventsResult.data ?? [])
+
     setState({
       loading: false,
       error: null,
@@ -52,6 +58,7 @@ export function useTournament(slug) {
       roundStrokes: roundStrokes.data ?? [],
       messages: messages.data ?? [],
       members: members.data ?? [],
+      holeEvents,
     })
   }, [slug])
 
@@ -66,7 +73,7 @@ export function useTournament(slug) {
       channelRef.current = null
     }
     const ch = supabase.channel(`tt-${tid}`)
-    const tables = ['scores', 'round_strokes', 'round_points', 'rounds', 'messages', 'players']
+    const tables = ['scores', 'round_strokes', 'round_points', 'rounds', 'messages', 'players', 'hole_events']
     for (const table of tables) {
       ch.on('postgres_changes',
         { event: '*', schema: 'public', table, filter: `tournament_id=eq.${tid}` },
