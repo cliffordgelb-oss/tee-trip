@@ -27,8 +27,10 @@ export function getStrokesOnHole(totalStrokes, strokeIndex, holesCount = 18) {
 }
 
 // strokesMap: { [playerId]: { handicap, group_assignment } }
-// For individual_stroke: per-group min handicap is the reference.
-// For best_ball/scramble/championship: field-min is the reference.
+// For individual formats (individual_stroke, stableford, modified_stableford):
+//   per-group min handicap is the reference.
+// For team / cross-group formats (best_ball, scramble, shamble, pinehurst,
+//   match_play, championship): field-min is the reference.
 // Returns { [playerId]: effectiveStrokesForRound }.
 export function deriveStrokesForFormat(strokesMap, formatKey) {
   const out = {}
@@ -47,6 +49,7 @@ export function deriveStrokesForFormat(strokesMap, formatKey) {
     || formatKey === 'scramble'
     || formatKey === 'shamble'
     || formatKey === 'pinehurst'
+    || formatKey === 'match_play'
     || formatKey === 'championship'
   for (const [pid, s] of entries) {
     if (!s) continue
@@ -55,6 +58,34 @@ export function deriveStrokesForFormat(strokesMap, formatKey) {
     out[pid] = Math.max(0, hcp - ref)
   }
   return out
+}
+
+// PGA "International" event scale for Modified Stableford.
+export const MODIFIED_STABLEFORD_TABLE = {
+  eagleOrBetter: 5, birdie: 2, par: 0, bogey: -1, doubleOrWorse: -3,
+}
+
+// Wolf default point scheme (per hole). Owners can override via
+// scoring_config.wolf.points.
+//   wolfPartnerWin   — wolf + partner each get this on a win
+//   wolfPartnerLose  — each of the other 3 get this when wolf+partner lose
+//   loneWolfWin      — wolf alone takes this on a win
+//   loneWolfLose     — each of the other 3 get this when lone wolf loses
+//   tied             — points awarded on a halved hole
+export const WOLF_DEFAULT_POINTS = {
+  wolfPartnerWin: 2,
+  wolfPartnerLose: 3,
+  loneWolfWin: 4,
+  loneWolfLose: 1,
+  tied: 0,
+}
+
+// Pure rotation: wolf for hole H is players[(H-1) mod 4]. `groupPids`
+// must be ordered (use display_order). Returns the wolf's player id, or
+// null if the group isn't exactly 4.
+export function wolfForHole(groupPids, hole) {
+  if (!groupPids || groupPids.length !== 4) return null
+  return groupPids[(hole - 1) % 4]
 }
 
 // ----- Standard Stableford lookup. `diff` is net-minus-par on a hole
@@ -159,11 +190,13 @@ export function championshipLadder(n) {
 }
 
 // ----- Award points for one round.
-// scoringConfig: jsonb { individual_stroke, stableford, best_ball, scramble, championship }
+// scoringConfig: jsonb { individual_stroke, stableford, modified_stableford,
+//                        best_ball, scramble, match_play, wolf, championship }
 // cumulativeBefore: { [pid]: points } for championship seeding; null for non-championship
+// wolfPicks: [{ round_id, hole, partner_id, lone }] — only consulted for wolf rounds
 export function computeRoundPoints({
   players, round, holes, scores, roundStrokes, scoringConfig, cumulativeBefore = null,
-  championshipTierSize = null,
+  championshipTierSize = null, wolfPicks = null,
 }) {
   const points = Object.fromEntries(players.map(p => [p.id, 0]))
   if (!round || !holes?.length) return points
@@ -179,11 +212,14 @@ export function computeRoundPoints({
   const groups = groupsByLetter(strokesMap)
   const roundScores = (scores || []).filter(s => s.round_id === round.id)
 
-  const isf = scoringConfig?.individual_stroke ?? {}
-  const sf  = scoringConfig?.stableford ?? {}
-  const bb  = scoringConfig?.best_ball ?? {}
-  const sc  = scoringConfig?.scramble ?? {}
-  const ch  = scoringConfig?.championship ?? {}
+  const isf  = scoringConfig?.individual_stroke ?? {}
+  const sf   = scoringConfig?.stableford ?? {}
+  const msf  = scoringConfig?.modified_stableford ?? {}
+  const bb   = scoringConfig?.best_ball ?? {}
+  const sc   = scoringConfig?.scramble ?? {}
+  const mp   = scoringConfig?.match_play ?? {}
+  const wcfg = scoringConfig?.wolf ?? {}
+  const ch   = scoringConfig?.championship ?? {}
 
   if (round.format === 'individual_stroke') {
     const holePoints = isf.holePoints ?? [5, 3, 1]
@@ -215,14 +251,18 @@ export function computeRoundPoints({
     return points
   }
 
-  if (round.format === 'stableford') {
-    // Per-hole net points vs par (eagle+=8, birdie=4, par=2, bogey=1, double+=0
-    // by default). Tally per player, then award placement points within the
-    // group. Same per-group / per-group-min-handicap convention as
-    // individual_stroke. Highest stableford total wins the group.
-    const placement = sf.placement ?? [12, 8, 4]
-    const matchPlayBonus = sf.matchPlayBonus ?? 0
-    const pointsTable = sf.pointsTable
+  if (round.format === 'stableford' || round.format === 'modified_stableford') {
+    // Per-hole net points vs par. Stableford defaults to the WHS scale
+    // (eagle+=8, birdie=4, par=2, bogey=1, double+=0); modified Stableford
+    // defaults to the PGA "International" scale (eagle+=5, birdie=2, par=0,
+    // bogey=-1, double+=-3) — negative totals are possible and order
+    // correctly (higher wins). Same per-group / group-min-handicap convention
+    // as individual_stroke. Highest stableford total wins the group.
+    const isModified = round.format === 'modified_stableford'
+    const cfg = isModified ? msf : sf
+    const placement = cfg.placement ?? [12, 8, 4]
+    const matchPlayBonus = cfg.matchPlayBonus ?? 0
+    const pointsTable = cfg.pointsTable ?? (isModified ? MODIFIED_STABLEFORD_TABLE : undefined)
 
     for (const [, gPids] of groups) {
       const totals = {}
@@ -318,6 +358,103 @@ export function computeRoundPoints({
     return points
   }
 
+  if (round.format === 'match_play') {
+    // Team head-to-head: best net per hole on each side; winner of each
+    // hole goes +1; match decided by holes-up after the round. Winner
+    // (team) takes winnerPoints; tie splits. Needs exactly 2 groups —
+    // round-robin across 3+ groups would need pairings (v2). Same
+    // field-min handicap convention as best-ball / scramble.
+    const winnerPoints = mp.winnerPoints ?? 15
+    if (groups.size !== 2) return points
+    const [[, gA], [, gB]] = [...groups]
+    const aFull = roundScores.filter(s => gA.includes(s.player_id)).length === gA.length * holesCount
+    const bFull = roundScores.filter(s => gB.includes(s.player_id)).length === gB.length * holesCount
+    if (!aFull || !bFull) return points
+    const match = computeTeamBestBallMatch(gA, gB, sortedHoles, roundScores, effectiveStrokes)
+    if (match.aHolesUp > 0) {
+      gA.forEach(pid => { points[pid] += winnerPoints })
+    } else if (match.aHolesUp < 0) {
+      gB.forEach(pid => { points[pid] += winnerPoints })
+    } else {
+      const split = winnerPoints / 2
+      ;[...gA, ...gB].forEach(pid => { points[pid] += split })
+    }
+    return points
+  }
+
+  if (round.format === 'wolf') {
+    // 4-player rotating partner game. Per group of exactly 4 (sorted by
+    // display_order). For each hole:
+    //   - Wolf = players[(hole-1) % 4]
+    //   - Pick from wolf_picks: lone, partner_id, or unpicked (skip)
+    //   - Best NET on wolf's side vs best NET on other side; tie => `tied`.
+    // Points (defaults; configurable via scoring_config.wolf.points):
+    //   partnered win  → 2 to wolf+partner
+    //   partnered lose → 3 to each of the other 3
+    //   lone win       → 4 to wolf
+    //   lone lose      → 1 to each of the other 3
+    //   tied           → 0
+    // Same group-min handicap convention as individual_stroke.
+    const pts = { ...WOLF_DEFAULT_POINTS, ...(wcfg.points ?? {}) }
+    const picksByHole = {}
+    for (const wp of wolfPicks || []) {
+      if (wp.round_id !== round.id) continue
+      picksByHole[wp.hole] = wp
+    }
+    const orderedPlayers = [...players].sort(
+      (a, b) => (a.display_order ?? 0) - (b.display_order ?? 0)
+    )
+
+    for (const [, gPids] of groups) {
+      if (gPids.length !== 4) continue
+      // Order group members by global display_order, then take the 4.
+      const orderedGroupPids = orderedPlayers
+        .filter(p => gPids.includes(p.id))
+        .map(p => p.id)
+      if (orderedGroupPids.length !== 4) continue
+
+      for (const h of sortedHoles) {
+        const wolfPid = wolfForHole(orderedGroupPids, h.hole)
+        if (!wolfPid) continue
+        const pick = picksByHole[h.hole]
+        if (!pick) continue // unpicked: no points yet
+        const isLone = !!pick.lone
+        const partnerPid = isLone ? null : pick.partner_id
+        if (!isLone && !partnerPid) continue
+        if (partnerPid && !orderedGroupPids.includes(partnerPid)) continue
+        if (partnerPid === wolfPid) continue // sanity
+
+        // Net for each player; bail if any score missing.
+        const net = {}
+        let allEntered = true
+        for (const pid of orderedGroupPids) {
+          const s = roundScores.find(sc2 => sc2.player_id === pid && sc2.hole === h.hole)
+          if (!s) { allEntered = false; break }
+          const so = getStrokesOnHole(effectiveStrokes[pid] || 0, h.stroke_index, holesCount)
+          net[pid] = s.gross - so
+        }
+        if (!allEntered) continue
+
+        const wolfSide = isLone ? [wolfPid] : [wolfPid, partnerPid]
+        const otherSide = orderedGroupPids.filter(pid => !wolfSide.includes(pid))
+        const wolfBest = Math.min(...wolfSide.map(pid => net[pid]))
+        const otherBest = Math.min(...otherSide.map(pid => net[pid]))
+
+        if (wolfBest < otherBest) {
+          const award = isLone ? pts.loneWolfWin : pts.wolfPartnerWin
+          wolfSide.forEach(pid => { points[pid] += award })
+        } else if (otherBest < wolfBest) {
+          const award = isLone ? pts.loneWolfLose : pts.wolfPartnerLose
+          otherSide.forEach(pid => { points[pid] += award })
+        } else {
+          // Tied — split (defaults to zero).
+          orderedGroupPids.forEach(pid => { points[pid] += pts.tied })
+        }
+      }
+    }
+    return points
+  }
+
   if (round.format === 'championship') {
     if (!cumulativeBefore) return points
     const placement = ch.placement ?? [12, 8, 4]
@@ -374,7 +511,9 @@ export function computeRoundPoints({
 // championship). Team-format rounds have ambiguous per-player skin
 // semantics — punt on those until users ask.
 
-export const SKINS_ELIGIBLE_FORMATS = new Set(['individual_stroke', 'stableford', 'championship'])
+export const SKINS_ELIGIBLE_FORMATS = new Set([
+  'individual_stroke', 'stableford', 'modified_stableford', 'championship',
+])
 
 export function isSkinsEligible(round) {
   return SKINS_ELIGIBLE_FORMATS.has(round?.format)
@@ -720,6 +859,7 @@ export function computeBBBForTournament({ players, rounds, holeEvents }) {
 // ----- Full tournament leaderboard.
 export function computeLeaderboard({
   players, rounds, holes, scores, roundStrokes, scoringConfig, championshipTierSize,
+  wolfPicks,
 }) {
   const perRound = {}
   const totals = Object.fromEntries(players.map(p => [p.id, 0]))
@@ -736,7 +876,7 @@ export function computeLeaderboard({
     const cumulativeBefore = r.format === 'championship' ? { ...totals } : null
     const pts = computeRoundPoints({
       players, round: r, holes: roundHoles, scores, roundStrokes,
-      scoringConfig, cumulativeBefore, championshipTierSize,
+      scoringConfig, cumulativeBefore, championshipTierSize, wolfPicks,
     })
     perRound[r.id] = pts
     for (const [pid, v] of Object.entries(pts)) totals[pid] = (totals[pid] || 0) + v

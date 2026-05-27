@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase.js'
 import { useAuth } from '../lib/auth.jsx'
@@ -9,8 +9,10 @@ import {
   computeNassauForRound, isNassauEligible,
   computeVegasForRound,
   computeBBBForRound, BBB_EVENT_TYPES,
+  wolfForHole, WOLF_DEFAULT_POINTS,
 } from '../lib/scoring.js'
 import { Shell, Header, Card, Button, Chip, PencilFilters } from '../components/ui.jsx'
+import ScoreDial from '../components/ScoreDial.jsx'
 
 const GROUP_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F']
 
@@ -68,6 +70,20 @@ export default function RoundDetail() {
         onSaved={t.refetch}
       />
 
+      {round.format === 'wolf' && (
+        <WolfPicksPanel
+          tournamentId={t.tournament.id}
+          round={round}
+          players={t.players}
+          holes={roundHoles}
+          roundStrokes={roundStrokes}
+          scores={roundScores}
+          wolfPicks={(t.wolfPicks ?? []).filter(wp => wp.round_id === round.id)}
+          scoringConfig={t.tournament.scoring_config}
+          onChange={t.refetch}
+        />
+      )}
+
       <h2 style={{
         fontFamily: 'var(--tt-font-display)',
         fontSize: 'var(--tt-text-lg)',
@@ -123,6 +139,271 @@ export default function RoundDetail() {
       />
     </Shell>
   )
+}
+
+// ── Wolf picks panel (per round) ─────────────────────────────
+// Renders one section per group of exactly 4. For each hole shows the
+// rotating wolf and a Lone / partner picker. Anyone can edit (the
+// captain on each hole is enforced socially — "lax timing" per design).
+function WolfPicksPanel({
+  tournamentId, round, players, holes, roundStrokes, scores, wolfPicks,
+  scoringConfig, onChange,
+}) {
+  const playerMap = useMemo(
+    () => Object.fromEntries(players.map(p => [p.id, p])),
+    [players]
+  )
+  const orderedPlayers = useMemo(
+    () => [...players].sort((a, b) => (a.display_order ?? 0) - (b.display_order ?? 0)),
+    [players]
+  )
+
+  // Groups with exactly 4 — Wolf only fires for these.
+  const wolfGroups = useMemo(() => {
+    const byLetter = new Map()
+    for (const rs of roundStrokes) {
+      if (!rs.group_assignment) continue
+      if (!byLetter.has(rs.group_assignment)) byLetter.set(rs.group_assignment, [])
+      byLetter.get(rs.group_assignment).push(rs.player_id)
+    }
+    const out = []
+    for (const [letter, pids] of [...byLetter.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      if (pids.length !== 4) continue
+      const ordered = orderedPlayers.filter(p => pids.includes(p.id)).map(p => p.id)
+      if (ordered.length === 4) out.push({ letter, pids: ordered })
+    }
+    return out
+  }, [roundStrokes, orderedPlayers])
+
+  if (wolfGroups.length === 0) {
+    return (
+      <Card>
+        <div className="tt-eyebrow" style={{ marginBottom: 6 }}>Wolf</div>
+        <p className="tt-small tt-muted" style={{ margin: 0 }}>
+          Wolf needs all 4 players assigned to a single group. Edit Setup above
+          to put everyone in Group A.
+        </p>
+      </Card>
+    )
+  }
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      {wolfGroups.map(({ letter, pids }) => (
+        <WolfGroupPanel
+          key={letter}
+          letter={letter}
+          groupPids={pids}
+          tournamentId={tournamentId}
+          round={round}
+          holes={holes}
+          scores={scores}
+          roundStrokes={roundStrokes}
+          wolfPicks={wolfPicks}
+          playerMap={playerMap}
+          scoringConfig={scoringConfig}
+          showLetter={wolfGroups.length > 1}
+          onChange={onChange}
+        />
+      ))}
+    </div>
+  )
+}
+
+function WolfGroupPanel({
+  letter, groupPids, tournamentId, round, holes, scores, roundStrokes,
+  wolfPicks, playerMap, scoringConfig, showLetter, onChange,
+}) {
+  const sortedHoles = useMemo(() => [...holes].sort((a, b) => a.hole - b.hole), [holes])
+  const strokesMap = useMemo(() => {
+    const m = {}
+    for (const rs of roundStrokes) {
+      m[rs.player_id] = { handicap: rs.handicap, group_assignment: rs.group_assignment }
+    }
+    return m
+  }, [roundStrokes])
+  const effectiveStrokes = useMemo(
+    () => deriveStrokesForFormat(strokesMap, 'wolf'),
+    [strokesMap]
+  )
+  const picksByHole = useMemo(() => {
+    const m = {}
+    for (const wp of wolfPicks) m[wp.hole] = wp
+    return m
+  }, [wolfPicks])
+
+  const pointsCfg = { ...WOLF_DEFAULT_POINTS, ...(scoringConfig?.wolf?.points ?? {}) }
+
+  async function savePick(hole, value) {
+    const row = {
+      round_id: round.id,
+      tournament_id: tournamentId,
+      hole,
+      partner_id: value === 'lone' || !value ? null : value,
+      lone: value === 'lone',
+      updated_at: new Date().toISOString(),
+    }
+    const { error } = await supabase
+      .from('wolf_picks')
+      .upsert(row, { onConflict: 'round_id,hole' })
+    if (!error) onChange?.()
+  }
+
+  async function clearPick(hole) {
+    const { error } = await supabase
+      .from('wolf_picks')
+      .delete()
+      .eq('round_id', round.id)
+      .eq('hole', hole)
+    if (!error) onChange?.()
+  }
+
+  // Running totals per player (preview of round points).
+  const runningTotals = Object.fromEntries(groupPids.map(pid => [pid, 0]))
+
+  return (
+    <Card style={{ marginBottom: 12 }}>
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'baseline',
+        marginBottom: 10,
+        gap: 8,
+        flexWrap: 'wrap',
+      }}>
+        <div>
+          <h2 style={{ fontSize: 'var(--tt-text-lg)', margin: 0, fontFamily: 'var(--tt-font-display)' }}>
+            Wolf{showLetter ? ` — Group ${letter}` : ''}
+          </h2>
+          <p className="tt-xs tt-muted" style={{ margin: '2px 0 0' }}>
+            Rotation: {groupPids.map((pid, i) => `H${i + 1} ${playerMap[pid]?.emoji ?? '⛳'}`).join(' · ')}
+          </p>
+        </div>
+      </div>
+
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%', fontVariantNumeric: 'tabular-nums' }}>
+          <thead>
+            <tr>
+              <th style={wolfTh}>H</th>
+              <th style={wolfTh}>Wolf</th>
+              <th style={{ ...wolfTh, textAlign: 'left' }}>Pick</th>
+              <th style={{ ...wolfTh, textAlign: 'left' }}>Result</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sortedHoles.map(h => {
+              const wolfPid = wolfForHole(groupPids, h.hole)
+              const wolfPlayer = playerMap[wolfPid]
+              const pick = picksByHole[h.hole]
+              const isLone = !!pick?.lone
+              const partnerPid = pick?.partner_id ?? null
+              const selectValue = isLone ? 'lone' : (partnerPid || '')
+
+              // Net for each, if all entered.
+              const nets = {}
+              let allEntered = true
+              for (const pid of groupPids) {
+                const s = scores.find(sc => sc.player_id === pid && sc.hole === h.hole)
+                if (!s) { allEntered = false; break }
+                const so = getStrokesOnHole(effectiveStrokes[pid] || 0, h.stroke_index, sortedHoles.length)
+                nets[pid] = s.gross - so
+              }
+
+              let result = null
+              let award = null
+              if (pick && (isLone || partnerPid) && allEntered) {
+                const wolfSide = isLone ? [wolfPid] : [wolfPid, partnerPid]
+                const otherSide = groupPids.filter(pid => !wolfSide.includes(pid))
+                const wolfBest = Math.min(...wolfSide.map(pid => nets[pid]))
+                const otherBest = Math.min(...otherSide.map(pid => nets[pid]))
+                if (wolfBest < otherBest) {
+                  award = isLone ? pointsCfg.loneWolfWin : pointsCfg.wolfPartnerWin
+                  result = isLone
+                    ? `Lone Wolf wins +${award}`
+                    : `Wolf+partner +${award}`
+                  wolfSide.forEach(pid => { runningTotals[pid] += award })
+                } else if (otherBest < wolfBest) {
+                  award = isLone ? pointsCfg.loneWolfLose : pointsCfg.wolfPartnerLose
+                  result = `Other team +${award} ea.`
+                  otherSide.forEach(pid => { runningTotals[pid] += award })
+                } else {
+                  result = pointsCfg.tied > 0 ? `Tied +${pointsCfg.tied} ea.` : 'Tied'
+                  groupPids.forEach(pid => { runningTotals[pid] += pointsCfg.tied })
+                }
+              } else if (pick && !allEntered) {
+                result = 'awaiting scores'
+              }
+
+              return (
+                <tr key={h.hole} style={{ borderTop: '1px solid var(--tt-line)' }}>
+                  <td style={wolfTd}>{h.hole}</td>
+                  <td style={wolfTd}>
+                    <span style={{ marginRight: 4 }}>{wolfPlayer?.emoji ?? '⛳'}</span>
+                    <span className="tt-xs" style={{ color: 'var(--tt-ink-soft)' }}>
+                      {wolfPlayer?.initials || wolfPlayer?.name}
+                    </span>
+                  </td>
+                  <td style={{ ...wolfTd, textAlign: 'left' }}>
+                    <select
+                      value={selectValue}
+                      onChange={e => {
+                        const v = e.target.value
+                        if (!v) clearPick(h.hole)
+                        else savePick(h.hole, v)
+                      }}
+                      style={{ fontSize: 13, padding: '2px 4px', maxWidth: 180 }}
+                    >
+                      <option value="">—</option>
+                      <option value="lone">🐺 Lone Wolf</option>
+                      {groupPids.filter(pid => pid !== wolfPid).map(pid => (
+                        <option key={pid} value={pid}>
+                          partner: {playerMap[pid]?.name || pid.slice(0, 6)}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td style={{ ...wolfTd, textAlign: 'left', color: 'var(--tt-ink-soft)' }}>
+                    {result || (pick ? '' : '—')}
+                  </td>
+                </tr>
+              )
+            })}
+            <tr style={{ borderTop: '2px solid var(--tt-fairway)', background: 'var(--tt-cream-deep)' }}>
+              <td style={wolfTd} colSpan={2} className="tt-eyebrow">Round total</td>
+              <td style={{ ...wolfTd, textAlign: 'left' }} colSpan={2}>
+                {groupPids.map(pid => (
+                  <span key={pid} style={{ marginRight: 10, fontWeight: 700 }}>
+                    {playerMap[pid]?.emoji} {runningTotals[pid]}
+                  </span>
+                ))}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  )
+}
+
+const wolfTh = {
+  padding: '6px 8px',
+  fontFamily: 'var(--tt-font-ui)',
+  fontWeight: 600,
+  fontSize: 11,
+  letterSpacing: '0.12em',
+  textTransform: 'uppercase',
+  color: 'var(--tt-ink-soft)',
+  textAlign: 'center',
+}
+const wolfTd = {
+  padding: '6px 8px',
+  fontFamily: 'var(--tt-font-mono)',
+  fontVariantNumeric: 'tabular-nums',
+  fontSize: 14,
+  textAlign: 'center',
+  color: 'var(--tt-ink)',
+  whiteSpace: 'nowrap',
 }
 
 // ── Bingo Bango Bongo panel (per round) ──────────────────────
@@ -984,27 +1265,32 @@ function ScoreCell({ round, hole, player, mine, enteredBy, effectiveStrokes, hol
   const [val, setVal] = useState(String(initialValue ?? ''))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(false)
+  const [dialAnchor, setDialAnchor] = useState(null)
+
+  const wrapRef = useRef(null)
+  const inputRef = useRef(null)
+  const pressTimer = useRef(null)
+  const longPressedRef = useRef(false)
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setVal(String(initialValue ?? ''))
   }, [initialValue])
 
-  async function commit() {
-    const n = parseInt(val, 10)
-    if (val === '' || Number.isNaN(n)) {
-      if (initialValue != null && initialValue !== '') {
-        setSaving(true)
-        const del = await supabase
-          .from('scores')
-          .delete()
-          .eq('round_id', round.id)
-          .eq('player_id', player.id)
-          .eq('hole', hole.hole)
-        setSaving(false)
-        if (del.error) setError(true)
-        else { setError(false); onChange?.() }
-      }
+  // Writes `n` (or null to clear). Used by both blur-commit and the dial.
+  async function writeScore(n) {
+    if (n == null) {
+      if (initialValue == null || initialValue === '') return
+      setSaving(true)
+      const del = await supabase
+        .from('scores')
+        .delete()
+        .eq('round_id', round.id)
+        .eq('player_id', player.id)
+        .eq('hole', hole.hole)
+      setSaving(false)
+      if (del.error) { setError(true); return }
+      setError(false); onChange?.()
       return
     }
     if (n < 1 || n > 20) { setError(true); return }
@@ -1022,8 +1308,30 @@ function ScoreCell({ round, hole, player, mine, enteredBy, effectiveStrokes, hol
       }, { onConflict: 'round_id,player_id,hole' })
     setSaving(false)
     if (up.error) { setError(true); return }
-    setError(false)
-    onChange?.()
+    setError(false); onChange?.()
+  }
+
+  async function commit() {
+    if (val === '' || Number.isNaN(parseInt(val, 10))) {
+      await writeScore(null)
+      return
+    }
+    await writeScore(parseInt(val, 10))
+  }
+
+  function startPress() {
+    longPressedRef.current = false
+    if (pressTimer.current) clearTimeout(pressTimer.current)
+    pressTimer.current = setTimeout(() => {
+      longPressedRef.current = true
+      const r = wrapRef.current?.getBoundingClientRect()
+      if (!r) return
+      inputRef.current?.blur()
+      setDialAnchor(r)
+    }, 350)
+  }
+  function cancelPress() {
+    if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null }
   }
 
   const so = getStrokesOnHole(effectiveStrokes[player.id] || 0, hole.stroke_index, holesCount)
@@ -1040,14 +1348,24 @@ function ScoreCell({ round, hole, player, mine, enteredBy, effectiveStrokes, hol
 
   return (
     <td style={{ ...cellTd, position: 'relative' }}>
-      <div style={{
-        position: 'relative',
-        display: 'inline-block',
-        width: 44,
-        height: 34,
-        verticalAlign: 'middle',
+      <div
+        ref={wrapRef}
+        onPointerDown={startPress}
+        onPointerUp={cancelPress}
+        onPointerCancel={cancelPress}
+        onPointerLeave={cancelPress}
+        onContextMenu={e => { e.preventDefault() }}
+        style={{
+          position: 'relative',
+          display: 'inline-block',
+          width: 44,
+          height: 34,
+          verticalAlign: 'middle',
+          WebkitTouchCallout: 'none',
+          touchAction: 'manipulation',
       }}>
         <input
+          ref={inputRef}
           inputMode="numeric"
           value={val}
           onChange={e => setVal(e.target.value.replace(/[^\d]/g, '').slice(0, 2))}
@@ -1100,6 +1418,29 @@ function ScoreCell({ round, hole, player, mine, enteredBy, effectiveStrokes, hol
           </svg>
         )}
       </div>
+      {dialAnchor && (
+        <ScoreDial
+          anchorRect={dialAnchor}
+          par={hole.par}
+          strokesOnHole={so}
+          onPick={async n => {
+            setDialAnchor(null)
+            setVal(String(n))
+            await writeScore(n)
+          }}
+          onClear={async () => {
+            setDialAnchor(null)
+            setVal('')
+            await writeScore(null)
+          }}
+          onType={() => {
+            setDialAnchor(null)
+            // Defer focus so the dial unmounts before the keyboard opens.
+            requestAnimationFrame(() => inputRef.current?.focus())
+          }}
+          onClose={() => setDialAnchor(null)}
+        />
+      )}
     </td>
   )
 }

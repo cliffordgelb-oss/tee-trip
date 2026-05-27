@@ -10,10 +10,14 @@ export function defaultHoles(holesCount = 18) {
 
 export const ROUND_FORMATS = [
   { value: 'individual_stroke', label: 'Individual stroke play' },
+  { value: 'stableford',        label: 'Stableford' },
+  { value: 'modified_stableford', label: 'Modified Stableford' },
   { value: 'best_ball',         label: 'Best ball (team)' },
   { value: 'scramble',          label: 'Scramble (team)' },
   { value: 'shamble',           label: 'Shamble (team)' },
   { value: 'pinehurst',         label: 'Pinehurst (team)' },
+  { value: 'match_play',        label: 'Match play (team)' },
+  { value: 'wolf',              label: 'Wolf (4 players)' },
   { value: 'championship',      label: 'Championship final (stroke play, seeded)' },
 ]
 
@@ -27,6 +31,20 @@ export const ROUND_FORMAT_TILES = [
     short: 'Every golfer for themselves.',
     desc:
       'Everyone plays their own ball the whole round. Lowest total strokes wins. The classic — works great with mixed handicaps and rewards consistency.',
+  },
+  {
+    value: 'stableford',
+    title: 'Stableford',
+    short: 'Points per hole. One blow-up won\'t kill your round.',
+    desc:
+      'Every golfer plays their own ball. Each hole earns points based on net score vs par: eagle-or-better = 8, birdie = 4, par = 2, bogey = 1, double-or-worse = 0. Highest points wins. Forgiving — you can\'t lose more than zero on a hole — so big numbers don\'t torpedo your day.',
+  },
+  {
+    value: 'modified_stableford',
+    title: 'Modified Stableford',
+    short: 'Aggressive points. Birdies pay, blow-ups hurt.',
+    desc:
+      'The PGA "International" event scale: eagle-or-better = 5, birdie = 2, par = 0, bogey = -1, double-or-worse = -3. Rewards going for it; punishes the wheels-coming-off hole. Totals can go negative. Highest wins.',
   },
   {
     value: 'best_ball',
@@ -50,11 +68,25 @@ export const ROUND_FORMAT_TILES = [
       'A middle ground between scramble and best ball. Everyone tees off, the team picks the best drive, then each player finishes the hole with their own ball. The team\'s hole score is the lowest individual score. Less luck than scramble, less brutal than best ball.',
   },
   {
+    value: 'match_play',
+    title: 'Match play',
+    short: 'Two teams. Win the hole, win the point.',
+    desc:
+      'Two teams play head-to-head. On every hole, each team\'s lowest net score is compared — the team with the better number wins the hole; tied holes are halved. Whoever wins more holes takes the match. Needs exactly two groups; works for any group size (singles, two-vs-two four-ball, three-vs-three, etc.).',
+  },
+  {
     value: 'pinehurst',
     title: 'Pinehurst (Chapman)',
     short: 'Two-player teams. Tee off, switch balls, then alternate shot.',
     desc:
       'Old-school strategic format. Two-player teams; both partners tee off, then switch and play their partner\'s drive for shot two. After that, they pick the better-positioned ball and finish the hole alternate-shot. One score per team per hole. Best with even-numbered groups paired up.',
+  },
+  {
+    value: 'wolf',
+    title: 'Wolf',
+    short: '4 players, rotating partner — or go it alone.',
+    desc:
+      'Strictly 4 players in one group. Each hole picks a "wolf" in rotation (hole 1 → player 1, hole 2 → player 2, etc.). The wolf either takes a partner for that hole or plays Lone Wolf vs the other three. Best net score on each side decides the hole. Default points: 2 each for wolf+partner win, 3 each for the other team if they win, 4 to lone wolf if they win solo, 1 each to the other three if lone wolf loses, 0 on a tie.',
   },
   {
     value: 'championship',

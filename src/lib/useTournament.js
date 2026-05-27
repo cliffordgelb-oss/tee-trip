@@ -16,6 +16,7 @@ export function useTournament(slug) {
     messages: [],
     members: [],
     holeEvents: [],
+    wolfPicks: [],
   })
   const channelRef = useRef(null)
 
@@ -42,10 +43,14 @@ export function useTournament(slug) {
     const firstErr = [players, rounds, holes, scores, roundStrokes, messages, members].find(r => r.error)
     if (firstErr) { setState(s => ({ ...s, loading: false, error: firstErr.error.message })); return }
 
-    // hole_events is newer — soft-fail so a DB that hasn't been migrated
-    // yet still loads the tournament view.
-    const holeEventsResult = await supabase.from('hole_events').select('*').eq('tournament_id', tid)
+    // hole_events + wolf_picks are newer — soft-fail so a DB that hasn't
+    // been migrated yet still loads the tournament view.
+    const [holeEventsResult, wolfPicksResult] = await Promise.all([
+      supabase.from('hole_events').select('*').eq('tournament_id', tid),
+      supabase.from('wolf_picks').select('*').eq('tournament_id', tid),
+    ])
     const holeEvents = holeEventsResult.error ? [] : (holeEventsResult.data ?? [])
+    const wolfPicks = wolfPicksResult.error ? [] : (wolfPicksResult.data ?? [])
 
     setState({
       loading: false,
@@ -59,6 +64,7 @@ export function useTournament(slug) {
       messages: messages.data ?? [],
       members: members.data ?? [],
       holeEvents,
+      wolfPicks,
     })
   }, [slug])
 
@@ -73,7 +79,7 @@ export function useTournament(slug) {
       channelRef.current = null
     }
     const ch = supabase.channel(`tt-${tid}`)
-    const tables = ['scores', 'round_strokes', 'round_points', 'rounds', 'messages', 'players', 'hole_events']
+    const tables = ['scores', 'round_strokes', 'round_points', 'rounds', 'messages', 'players', 'hole_events', 'wolf_picks']
     for (const table of tables) {
       ch.on('postgres_changes',
         { event: '*', schema: 'public', table, filter: `tournament_id=eq.${tid}` },

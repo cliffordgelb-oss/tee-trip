@@ -92,7 +92,7 @@ create table if not exists rounds (
   tournament_id uuid not null references tournaments(id) on delete cascade,
   round_number  int  not null,
   name          text not null,
-  format        text not null check (format in ('individual_stroke','best_ball','scramble','shamble','pinehurst','championship')),
+  format        text not null check (format in ('individual_stroke','stableford','modified_stableford','best_ball','scramble','shamble','pinehurst','match_play','wolf','championship')),
   status        text not null default 'pending' check (status in ('pending','active','complete')),
   scorekeepers  jsonb not null default '{}',  -- {"A":"<player_uuid>","B":"<player_uuid>"}
   starts_at     timestamptz,
@@ -191,6 +191,39 @@ create table if not exists notification_events (
 );
 create index if not exists idx_notif_pending on notification_events(status, created_at) where status = 'pending';
 
+-- Per-hole side-game events (Bingo Bango Bongo). Manually awarded:
+-- bingo = first on the green, bango = closest after all on green,
+-- bongo = first in the hole. Unique on (round, hole, event_type) so
+-- each hole has at most one of each event type.
+create table if not exists hole_events (
+  id            bigserial primary key,
+  round_id      bigint not null references rounds(id) on delete cascade,
+  tournament_id uuid   not null references tournaments(id) on delete cascade,
+  hole          int    not null check (hole between 1 and 18),
+  player_id     uuid   not null references players(id) on delete cascade,
+  event_type    text   not null check (event_type in ('bingo','bango','bongo')),
+  created_at    timestamptz not null default now(),
+  unique (round_id, hole, event_type)
+);
+create index if not exists idx_hole_events_round on hole_events(round_id);
+create index if not exists idx_hole_events_tournament on hole_events(tournament_id);
+
+-- Wolf picks: per hole on a Wolf round, who the wolf picked as partner —
+-- or `lone = true` to go solo. NULL partner + lone=false means not yet
+-- picked. Wolf rotation is positional (hole H → players[(H-1) % 4]),
+-- so the wolf isn't stored.
+create table if not exists wolf_picks (
+  round_id      bigint  not null references rounds(id) on delete cascade,
+  tournament_id uuid    not null references tournaments(id) on delete cascade,
+  hole          int     not null check (hole between 1 and 18),
+  partner_id    uuid    references players(id) on delete set null,
+  lone          boolean not null default false,
+  updated_at    timestamptz not null default now(),
+  primary key (round_id, hole),
+  check (not (lone and partner_id is not null))
+);
+create index if not exists idx_wolf_picks_tournament on wolf_picks(tournament_id);
+
 -- ============================================================
 -- updated_at trigger for tournaments
 -- ============================================================
@@ -284,6 +317,8 @@ alter table round_points        enable row level security;
 alter table messages            enable row level security;
 alter table push_subscriptions  enable row level security;
 alter table notification_events enable row level security;
+alter table hole_events         enable row level security;
+alter table wolf_picks          enable row level security;
 
 -- tournaments: members see their tournaments; authenticated users
 -- can create; owners/admins can update.
@@ -366,6 +401,23 @@ drop policy if exists "push_subs_owner" on push_subscriptions;
 create policy "push_subs_owner" on push_subscriptions
   for all using (user_id = auth.uid()) with check (user_id = auth.uid() and fn_is_member(tournament_id));
 
+-- hole_events (Bingo Bango Bongo): any tournament member can read + write.
+drop policy if exists "hole_events_select" on hole_events;
+create policy "hole_events_select" on hole_events
+  for select using (fn_is_member(tournament_id));
+drop policy if exists "hole_events_write" on hole_events;
+create policy "hole_events_write" on hole_events
+  for all using (fn_is_member(tournament_id)) with check (fn_is_member(tournament_id));
+
+-- wolf_picks: any tournament member can read + write (the wolf for a hole
+-- is whoever the rotation lands on; client enforces who can edit).
+drop policy if exists "wolf_picks_select" on wolf_picks;
+create policy "wolf_picks_select" on wolf_picks
+  for select using (fn_is_member(tournament_id));
+drop policy if exists "wolf_picks_write" on wolf_picks;
+create policy "wolf_picks_write" on wolf_picks
+  for all using (fn_is_member(tournament_id)) with check (fn_is_member(tournament_id));
+
 -- ============================================================
 -- Triggers + functions for push notifications (per-tournament)
 -- ============================================================
@@ -403,7 +455,7 @@ begin
     where round_id = new.round_id and player_id = new.player_id;
   if v_handicap is null then v_handicap := 0; end if;
 
-  if v_format in ('best_ball','scramble','shamble','pinehurst','championship') then
+  if v_format in ('best_ball','scramble','shamble','pinehurst','match_play','championship') then
     select coalesce(min(handicap), 0) into v_field_min
       from round_strokes where round_id = new.round_id;
   else
@@ -672,7 +724,8 @@ begin
   end if;
   for t in select unnest(array[
     'tournaments','tournament_members',
-    'scores','messages','round_points','round_strokes','rounds','push_subscriptions'
+    'scores','messages','round_points','round_strokes','rounds','push_subscriptions',
+    'hole_events','wolf_picks'
   ]) loop
     if not exists (
       select 1 from pg_publication_tables

@@ -96,7 +96,7 @@ function TabLink({ to, end, children }) {
   )
 }
 
-function Leaderboard({ tournament, players, rounds, holes, scores, roundStrokes }) {
+function Leaderboard({ tournament, players, rounds, holes, scores, roundStrokes, wolfPicks }) {
   const rows = useMemo(() => {
     if (!players.length || !rounds.length) return []
     return computeLeaderboard({
@@ -105,10 +105,11 @@ function Leaderboard({ tournament, players, rounds, holes, scores, roundStrokes 
       holes,
       scores,
       roundStrokes,
+      wolfPicks,
       scoringConfig: tournament.scoring_config,
       championshipTierSize: tournament.championship_tier_size,
     })
-  }, [tournament, players, rounds, holes, scores, roundStrokes])
+  }, [tournament, players, rounds, holes, scores, roundStrokes, wolfPicks])
 
   if (!players.length) {
     return <Card><p className="tt-muted">No players yet.</p></Card>

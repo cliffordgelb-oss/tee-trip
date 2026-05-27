@@ -6,37 +6,46 @@ import { slugify, randomSuffix } from '../lib/slug.js'
 import { defaultHoles, defaultPlayer, EMOJI_POOL, ROUND_FORMAT_TILES } from '../lib/defaults.js'
 import { Shell, Header, Card, Button } from '../components/ui.jsx'
 
-const TOTAL_STEPS = 4
 const PRESET_COUNTS = [4, 6, 8, 12]
+const ROUND_PRESET_COUNTS = [2, 3, 4]
+const ROUND_PRESET_LABELS = { 2: 'a 2-some', 3: 'a 3-some', 4: 'a 4-some' }
 const ROUND_COUNT_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8]
 const DEFAULT_PLAYER_COUNT = 8
+const DEFAULT_ROUND_PLAYER_COUNT = 4
 const DEFAULT_ROUND_COUNT = 3
 // Rotation used by the "Decide for me" button to vary up the trip.
-const SUGGESTION_ROTATION = ['individual_stroke', 'best_ball', 'scramble', 'shamble']
+const SUGGESTION_ROTATION = ['individual_stroke', 'best_ball', 'scramble', 'stableford', 'shamble']
 
 const TILE_BY_VALUE = Object.fromEntries(ROUND_FORMAT_TILES.map(t => [t.value, t]))
 
-export default function NewTournament() {
+// Single-round mode hides the championship tile (needs prior rounds to seed).
+const ROUND_MODE_TILES = ROUND_FORMAT_TILES.filter(t => t.value !== 'championship')
+
+export default function NewTournament({ mode = 'tournament' }) {
+  const isRound = mode === 'round'
+  const totalSteps = isRound ? 3 : 4
   const nav = useNavigate()
   const [step, setStep] = useState(1)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
 
-  // Step 1 — group size + round count
-  const [playerCount, setPlayerCount] = useState(DEFAULT_PLAYER_COUNT)
+  // Step 1 — group size (+ round count, trip mode only)
+  const initialPlayerCount = isRound ? DEFAULT_ROUND_PLAYER_COUNT : DEFAULT_PLAYER_COUNT
+  const [playerCount, setPlayerCount] = useState(initialPlayerCount)
   const [otherMode, setOtherMode] = useState(false)
-  const [roundCount, setRoundCount] = useState(DEFAULT_ROUND_COUNT)
+  const [roundCount, setRoundCount] = useState(isRound ? 1 : DEFAULT_ROUND_COUNT)
 
   // Step 2 — players (all optional)
   const [players, setPlayers] = useState(() =>
-    Array.from({ length: DEFAULT_PLAYER_COUNT }, (_, i) => defaultPlayer(i))
+    Array.from({ length: initialPlayerCount }, (_, i) => defaultPlayer(i))
   )
 
-  // Step 3 — round formats picked, in order. Starts empty; user either
-  // taps tiles themselves or hits "Decide for me" for an auto-pick.
+  // Step 3 — round formats picked.
+  // Trip mode: ordered list, multi-select with multiplicity, length === roundCount.
+  // Round mode: single-select; array has 0 or 1 entry.
   const [selectedFormats, setSelectedFormats] = useState([])
 
-  // Step 4 — trip name (slug derives silently)
+  // Step 4 — trip name (trip mode only; round mode auto-generates at submit).
   const [title, setTitle] = useState('')
   const [slug, setSlug] = useState('')
 
@@ -91,6 +100,11 @@ export default function NewTournament() {
   }
 
   function addFormat(value) {
+    if (isRound) {
+      // Single-select: tapping replaces the prior pick.
+      setSelectedFormats([value])
+      return
+    }
     setSelectedFormats(prev => {
       if (prev.length >= roundCount) return prev
       return moveChampionshipLast([...prev, value])
@@ -109,7 +123,7 @@ export default function NewTournament() {
     holes: defaultHoles(18),
   })), [selectedFormats])
 
-  function next() { setError(null); setStep(s => Math.min(TOTAL_STEPS, s + 1)) }
+  function next() { setError(null); setStep(s => Math.min(totalSteps, s + 1)) }
   function back() { setError(null); setStep(s => Math.max(1, s - 1)) }
 
   function validate() {
@@ -119,11 +133,13 @@ export default function NewTournament() {
       if (!roundCount || roundCount < 1) return 'Pick at least one round.'
     }
     if (step === 3) {
-      if (selectedFormats.length !== roundCount) {
+      if (isRound) {
+        if (selectedFormats.length !== 1) return 'Pick a format.'
+      } else if (selectedFormats.length !== roundCount) {
         return `Pick a format for each of the ${roundCount} round${roundCount === 1 ? '' : 's'}.`
       }
     }
-    if (step === 4) {
+    if (step === 4 && !isRound) {
       if (!title.trim() || title.trim().length < 2) return 'Give the trip a name.'
     }
     return null
@@ -133,9 +149,14 @@ export default function NewTournament() {
     setError(null)
     setSubmitting(true)
     try {
-      let finalSlug = slug
+      // In round mode, auto-name from date + format. Trip mode uses what the user typed.
+      const effectiveTitle = isRound
+        ? autoRoundTitle(selectedFormats[0])
+        : title.trim()
+      const baseSlug = isRound ? slugify(effectiveTitle) : slug
+      let finalSlug = baseSlug
       if (!/^[a-z0-9-]{3,40}$/.test(finalSlug)) {
-        finalSlug = `trip-${randomSuffix(6)}`
+        finalSlug = `${isRound ? 'round' : 'trip'}-${randomSuffix(6)}`
       }
 
       const finalPlayers = players.map((p, i) => {
@@ -165,7 +186,7 @@ export default function NewTournament() {
       const championship = rounds.find(r => r.is_championship)
       const config = {
         slug: finalSlug,
-        title: title.trim(),
+        title: effectiveTitle,
         num_groups: derivedPreset.num_groups,
         championship_tier_size: derivedPreset.championship_tier_size,
         scoring_config: derivedPreset.scoring_config,
@@ -178,18 +199,20 @@ export default function NewTournament() {
           holes: r.holes,
         })),
       }
+      // Single-round flow lands on the round scorecard; trip lands on the leaderboard.
+      const landingFor = (s) => isRound ? `/t/${s}/round/1` : `/t/${s}`
       const { data, error: rpcError } = await supabase.rpc('rpc_create_tournament', { config })
       if (rpcError) {
         if (/duplicate key|unique constraint/i.test(rpcError.message)) {
           config.slug = `${finalSlug}-${randomSuffix()}`
           const retry = await supabase.rpc('rpc_create_tournament', { config })
           if (retry.error) throw retry.error
-          nav(`/t/${retry.data.slug}`)
+          nav(landingFor(retry.data.slug))
           return
         }
         throw rpcError
       }
-      nav(`/t/${data.slug}`)
+      nav(landingFor(data.slug))
     } catch (e) {
       setError(e.message || String(e))
       setSubmitting(false)
@@ -199,7 +222,7 @@ export default function NewTournament() {
   function handleNext() {
     const err = validate()
     if (err) { setError(err); return }
-    if (step === TOTAL_STEPS) submit()
+    if (step === totalSteps) submit()
     else next()
   }
 
@@ -209,6 +232,14 @@ export default function NewTournament() {
     setStep(3)
   }
 
+  const headerTitle = isRound ? 'New round' : 'New tournament'
+  const headerMeta = isRound
+    ? 'A one-off round — names and scoring auto-fill.'
+    : 'Takes about 5 minutes. You can edit everything later.'
+  const submitLabel = isRound
+    ? (submitting ? 'Starting…' : 'Start round')
+    : (submitting ? 'Creating…' : 'Create tournament')
+
   return (
     <Shell>
       <Link
@@ -217,9 +248,9 @@ export default function NewTournament() {
         style={{ display: 'inline-block', marginBottom: 6 }}
       >← Dashboard</Link>
       <Header
-        eyebrow={`Step ${step} of ${TOTAL_STEPS}`}
-        title="New tournament"
-        meta="Takes about 5 minutes. You can edit everything later."
+        eyebrow={`Step ${step} of ${totalSteps}`}
+        title={headerTitle}
+        meta={headerMeta}
       />
 
       <div
@@ -230,7 +261,7 @@ export default function NewTournament() {
         }}
       >
         <div style={{
-          width: `${(step / TOTAL_STEPS) * 100}%`, height: '100%',
+          width: `${(step / totalSteps) * 100}%`, height: '100%',
           background: 'var(--tt-fairway)', transition: 'width 150ms linear',
         }} />
       </div>
@@ -239,6 +270,7 @@ export default function NewTournament() {
         <div className="stack">
           {step === 1 && (
             <Step1 {...{
+              isRound,
               playerCount, otherMode, setOtherMode, applyCount, derivedPreset,
               roundCount, applyRoundCount,
             }} />
@@ -248,10 +280,11 @@ export default function NewTournament() {
           )}
           {step === 3 && (
             <Step3 {...{
+              isRound,
               selectedFormats, roundCount, addFormat, removeFormatAt, decideForMe,
             }} />
           )}
-          {step === 4 && <Step4 {...{ title, onTitleChange }} />}
+          {step === 4 && !isRound && <Step4 {...{ title, onTitleChange }} />}
 
           {error && <p style={{ color: 'var(--tt-pencil)' }} className="tt-small">{error}</p>}
 
@@ -264,7 +297,7 @@ export default function NewTournament() {
                 </Button>
               )}
               <Button onClick={handleNext} disabled={submitting}>
-                {step === TOTAL_STEPS ? (submitting ? 'Creating…' : 'Create tournament') : 'Next'}
+                {step === totalSteps ? submitLabel : 'Next'}
               </Button>
             </div>
           </div>
@@ -274,23 +307,27 @@ export default function NewTournament() {
   )
 }
 
-// ── Step 1 — group size + round count ────────────────────────
+// ── Step 1 — group size (+ round count in trip mode) ─────────
 function Step1({
+  isRound,
   playerCount, otherMode, setOtherMode, applyCount, derivedPreset,
   roundCount, applyRoundCount,
 }) {
   return (
     <div className="stack">
       <h2 style={{ fontSize: 'var(--tt-text-lg)', margin: 0, fontFamily: 'var(--tt-font-display)' }}>
-        How many people are you going with?
+        {isRound ? 'How many people are playing?' : 'How many people are you going with?'}
       </h2>
       <p className="tt-small tt-muted" style={{ margin: 0 }}>
         We'll pre-fill the player list and pick a sensible scoring preset.
       </p>
 
       <div className="stack--tight">
-        {PRESET_COUNTS.map(n => {
+        {(isRound ? ROUND_PRESET_COUNTS : PRESET_COUNTS).map(n => {
           const active = !otherMode && playerCount === n
+          const blurb = isRound
+            ? ROUND_PRESET_LABELS[n]
+            : PRESETS[n]?.label.split('—')[1]?.trim()
           return (
             <label
               key={n}
@@ -309,7 +346,7 @@ function Step1({
                 onChange={() => { setOtherMode(false); applyCount(n) }}
                 style={{ width: 'auto' }}
               />
-              <span><strong>{n}</strong> players — {PRESETS[n].label.split('—')[1]?.trim()}</span>
+              <span><strong>{n}</strong> players{blurb ? ` — ${blurb}` : ''}</span>
             </label>
           )
         })}
@@ -342,46 +379,50 @@ function Step1({
         </label>
       </div>
 
-      <div style={{ borderTop: '1px solid var(--tt-line)', paddingTop: 16, marginTop: 4 }}>
-        <h2 style={{
-          fontSize: 'var(--tt-text-lg)',
-          margin: '0 0 8px',
-          fontFamily: 'var(--tt-font-display)',
-        }}>
-          How many rounds?
-        </h2>
-        <p className="tt-small tt-muted" style={{ margin: '0 0 10px' }}>
-          One round per day of golf you'll be playing.
-        </p>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {ROUND_COUNT_OPTIONS.map(n => {
-            const active = roundCount === n
-            return (
-              <button
-                key={n}
-                type="button"
-                onClick={() => applyRoundCount(n)}
-                style={{
-                  minWidth: 44,
-                  padding: '.55rem .9rem',
-                  borderRadius: 10,
-                  border: `1px solid ${active ? 'var(--tt-fairway)' : 'var(--tt-line)'}`,
-                  background: active ? 'var(--tt-fairway)' : 'var(--tt-paper)',
-                  color: active ? '#fff' : 'var(--tt-ink)',
-                  fontFamily: 'var(--tt-font-mono)',
-                  fontWeight: 600,
-                  fontSize: 15,
-                  cursor: 'pointer',
-                  transition: 'background 150ms linear, color 150ms linear',
-                }}
-              >{n}</button>
-            )
-          })}
+      {!isRound && (
+        <div style={{ borderTop: '1px solid var(--tt-line)', paddingTop: 16, marginTop: 4 }}>
+          <h2 style={{
+            fontSize: 'var(--tt-text-lg)',
+            margin: '0 0 8px',
+            fontFamily: 'var(--tt-font-display)',
+          }}>
+            How many rounds?
+          </h2>
+          <p className="tt-small tt-muted" style={{ margin: '0 0 10px' }}>
+            One round per day of golf you'll be playing.
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {ROUND_COUNT_OPTIONS.map(n => {
+              const active = roundCount === n
+              return (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => applyRoundCount(n)}
+                  style={{
+                    minWidth: 44,
+                    padding: '.55rem .9rem',
+                    borderRadius: 10,
+                    border: `1px solid ${active ? 'var(--tt-fairway)' : 'var(--tt-line)'}`,
+                    background: active ? 'var(--tt-fairway)' : 'var(--tt-paper)',
+                    color: active ? '#fff' : 'var(--tt-ink)',
+                    fontFamily: 'var(--tt-font-mono)',
+                    fontWeight: 600,
+                    fontSize: 15,
+                    cursor: 'pointer',
+                    transition: 'background 150ms linear, color 150ms linear',
+                  }}
+                >{n}</button>
+              )
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       <p className="tt-xs tt-muted" style={{ margin: 0 }}>
-        Scoring: {derivedPreset.num_groups} groups, championship tier of {derivedPreset.championship_tier_size}.
+        {isRound
+          ? `Scoring: ${derivedPreset.num_groups} groups.`
+          : `Scoring: ${derivedPreset.num_groups} groups, championship tier of ${derivedPreset.championship_tier_size}.`}
       </p>
     </div>
   )
@@ -453,7 +494,9 @@ function Step2({ players, updatePlayer, addPlayer, removePlayer }) {
 }
 
 // ── Step 3 — round format tiles ──────────────────────────────
-function Step3({ selectedFormats, roundCount, addFormat, removeFormatAt, decideForMe }) {
+// Trip mode: multi-pick, ordered list, "Decide for me", championship visible.
+// Round mode: single-pick (radio), no order list, no decide-for-me, no championship.
+function Step3({ isRound, selectedFormats, roundCount, addFormat, removeFormatAt, decideForMe }) {
   const positions = useMemo(() => {
     const map = {}
     selectedFormats.forEach((fmt, i) => {
@@ -465,37 +508,41 @@ function Step3({ selectedFormats, roundCount, addFormat, removeFormatAt, decideF
 
   const filled = selectedFormats.length
   const remaining = roundCount - filled
-  const atCap = filled >= roundCount
+  const atCap = !isRound && filled >= roundCount
+  const tiles = isRound ? ROUND_MODE_TILES : ROUND_FORMAT_TILES
 
   return (
     <div className="stack">
       <h2 style={{ fontSize: 'var(--tt-text-lg)', margin: 0, fontFamily: 'var(--tt-font-display)' }}>
-        Pick your rounds
+        {isRound ? 'Pick a format' : 'Pick your rounds'}
       </h2>
       <p className="tt-small tt-muted" style={{ margin: 0 }}>
-        Tap a format to add it as the next round. You can pick the same format more than
-        once (e.g. two stroke-play days). Championship always plays last.
+        {isRound
+          ? 'Tap a format. You can change your mind before starting.'
+          : 'Tap a format to add it as the next round. You can pick the same format more than once (e.g. two stroke-play days). Championship always plays last.'}
       </p>
 
-      <div style={{
-        display: 'flex',
-        gap: 8,
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        flexWrap: 'wrap',
-      }}>
-        <p className="tt-small" style={{ margin: 0, color: 'var(--tt-ink-soft)' }}>
-          <strong>{filled}</strong> of <strong>{roundCount}</strong> picked
-          {remaining > 0 && ` · ${remaining} to go`}
-          {atCap && ' · all set'}
-        </p>
-        <Button variant="ghost" size="sm" onClick={decideForMe}>
-          🎲 Decide for me
-        </Button>
-      </div>
+      {!isRound && (
+        <div style={{
+          display: 'flex',
+          gap: 8,
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+        }}>
+          <p className="tt-small" style={{ margin: 0, color: 'var(--tt-ink-soft)' }}>
+            <strong>{filled}</strong> of <strong>{roundCount}</strong> picked
+            {remaining > 0 && ` · ${remaining} to go`}
+            {atCap && ' · all set'}
+          </p>
+          <Button variant="ghost" size="sm" onClick={decideForMe}>
+            🎲 Decide for me
+          </Button>
+        </div>
+      )}
 
       <div style={{ display: 'grid', gap: 10 }}>
-        {ROUND_FORMAT_TILES.map(tile => {
+        {tiles.map(tile => {
           const tilePositions = positions[tile.value] || []
           const count = tilePositions.length
           const selected = count > 0
@@ -518,7 +565,7 @@ function Step3({ selectedFormats, roundCount, addFormat, removeFormatAt, decideF
                 transition: 'background 150ms linear, border-color 150ms linear, opacity 150ms linear',
               }}
             >
-              {selected && (
+              {selected && !isRound && (
                 <span
                   aria-label={`Selected as round ${tilePositions.join(', ')}`}
                   style={{
@@ -537,6 +584,22 @@ function Step3({ selectedFormats, roundCount, addFormat, removeFormatAt, decideF
                     justifyContent: 'center',
                   }}
                 >{count === 1 ? tilePositions[0] : `×${count}`}</span>
+              )}
+              {selected && isRound && (
+                <span
+                  aria-label="Selected"
+                  style={{
+                    position: 'absolute',
+                    top: 12, left: 12,
+                    width: 22, height: 22,
+                    borderRadius: 999,
+                    background: 'var(--tt-fairway)',
+                    color: '#fff',
+                    fontSize: 13,
+                    fontWeight: 700,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                >✓</span>
               )}
               <div style={{ paddingLeft: selected ? 36 : 0 }}>
                 <div style={{
@@ -558,8 +621,8 @@ function Step3({ selectedFormats, roundCount, addFormat, removeFormatAt, decideF
         })}
       </div>
 
-      {/* Round order — remove a slot to renumber */}
-      {selectedFormats.length > 0 && (
+      {/* Round order — trip mode only. Remove a slot to renumber. */}
+      {!isRound && selectedFormats.length > 0 && (
         <div className="stack--tight">
           <div className="tt-eyebrow">Round order</div>
           {selectedFormats.map((fmt, i) => (
@@ -618,6 +681,13 @@ function Step4({ title, onTitleChange }) {
       </label>
     </div>
   )
+}
+
+// Auto-generated title for single-round mode: "May 26 — Stableford".
+function autoRoundTitle(formatValue) {
+  const date = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  const fmt = TILE_BY_VALUE[formatValue]?.title || 'Round'
+  return `${date} — ${fmt}`
 }
 
 function deriveInitials(name) {

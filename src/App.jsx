@@ -28,6 +28,7 @@ export default function App() {
         <Route path="/login" element={<RedirectIfAuthed><Login /></RedirectIfAuthed>} />
         <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
         <Route path="/new" element={<RequireAuth><NewTournament /></RequireAuth>} />
+        <Route path="/new/round" element={<RequireAuth><NewTournament mode="round" /></RequireAuth>} />
         <Route path="/t/:slug/round/:number" element={<RequireAuth><RoundDetail /></RequireAuth>} />
         <Route path="/t/:slug/*" element={<RequireAuth><TournamentHome /></RequireAuth>} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

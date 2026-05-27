@@ -42,9 +42,14 @@ export default function Dashboard() {
           <h2 style={{ fontSize: 'var(--tt-text-lg)', margin: 0, fontFamily: 'var(--tt-font-display)' }}>
             Your tournaments
           </h2>
-          <Link to="/new" style={{ textDecoration: 'none' }}>
-            <Button size="sm">New tournament</Button>
-          </Link>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Link to="/new/round" style={{ textDecoration: 'none' }}>
+              <Button size="sm">New round</Button>
+            </Link>
+            <Link to="/new" style={{ textDecoration: 'none' }}>
+              <Button size="sm" variant="ghost">New trip</Button>
+            </Link>
+          </div>
         </div>
 
         {error && (
