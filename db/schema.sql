@@ -221,25 +221,33 @@ after insert on tournaments
 for each row execute function fn_tournament_owner_membership();
 
 -- ============================================================
--- Email-invite claim: when a user signs in for the first time,
--- claim any tournament_members rows that match their email.
+-- Email-invite claim: callable RPC that the app invokes after
+-- sign-in. Replaces an earlier trigger on auth.users — triggers
+-- on the auth schema in Supabase can break the user-creation
+-- path (supabase_auth_admin permissions). Safer to call this
+-- explicitly client-side once a session exists.
 -- ============================================================
-create or replace function fn_claim_email_invites()
-returns trigger language plpgsql security definer as $$
+create or replace function rpc_claim_my_email_invites()
+returns int language plpgsql security definer
+set search_path = public as $$
+declare
+  v_uid    uuid := auth.uid();
+  v_email  text;
+  v_count  int  := 0;
 begin
-  if new.email is null then return new; end if;
+  if v_uid is null then return 0; end if;
+  select email into v_email from auth.users where id = v_uid;
+  if v_email is null then return 0; end if;
   update tournament_members
-     set user_id = new.id,
+     set user_id = v_uid,
          email_invite = null
    where user_id is null
-     and lower(email_invite) = lower(new.email);
-  return new;
+     and lower(email_invite) = lower(v_email);
+  get diagnostics v_count = row_count;
+  return v_count;
 end $$;
 
-drop trigger if exists trg_claim_email_invites on auth.users;
-create trigger trg_claim_email_invites
-after insert or update of email on auth.users
-for each row execute function fn_claim_email_invites();
+grant execute on function rpc_claim_my_email_invites() to authenticated;
 
 -- ============================================================
 -- Membership helper (used by RLS policies)

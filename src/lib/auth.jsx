@@ -9,13 +9,31 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     let mounted = true
+    let claimedForUserId = null
+
+    function claimEmailInvites(userId) {
+      // Fire-and-forget: idempotent, ignores errors so a failed claim
+      // doesn't block app load.
+      if (!userId || claimedForUserId === userId) return
+      claimedForUserId = userId
+      supabase.rpc('rpc_claim_my_email_invites')
+        .then(({ error }) => {
+          if (error) console.warn('[auth] email-invite claim failed:', error.message)
+        })
+    }
+
     supabase.auth.getSession().then(({ data }) => {
       if (!mounted) return
-      setSession(data.session ?? null)
+      const next = data.session ?? null
+      setSession(next)
       setLoading(false)
+      if (next?.user?.id) claimEmailInvites(next.user.id)
     })
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, next) => {
       setSession(next ?? null)
+      if (event === 'SIGNED_IN' && next?.user?.id) {
+        claimEmailInvites(next.user.id)
+      }
     })
     return () => {
       mounted = false
