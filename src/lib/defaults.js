@@ -15,6 +15,40 @@ export const ROUND_FORMATS = [
   { value: 'championship',      label: 'Championship final (stroke play, seeded)' },
 ]
 
+// Format tiles for the wizard's "pick your rounds" step. Each tile
+// shows a one-line tagline + a richer description so non-golfers can
+// understand what they're picking without Googling.
+export const ROUND_FORMAT_TILES = [
+  {
+    value: 'individual_stroke',
+    title: 'Individual stroke play',
+    short: 'Every golfer for themselves.',
+    desc:
+      'Everyone plays their own ball the whole round. Lowest total strokes wins. The classic — works great with mixed handicaps and rewards consistency.',
+  },
+  {
+    value: 'best_ball',
+    title: 'Best ball',
+    short: 'Two teams. Best score per hole counts.',
+    desc:
+      'Split into two teams. Each player plays their own ball, but on every hole only the lowest score on each team counts toward that team\'s total. Lowest team score wins the round.',
+  },
+  {
+    value: 'scramble',
+    title: 'Scramble',
+    short: 'Two teams. Hit, pick the best shot, repeat.',
+    desc:
+      'Split into two teams. Everyone tees off, the team picks the best shot, then everyone plays from there. Same for the next shot, all the way down. Fast, social, forgiving of a bad day.',
+  },
+  {
+    value: 'championship',
+    title: 'Championship final',
+    short: 'Last round. Stroke play. Top players get a head start.',
+    desc:
+      'A stroke-play round where leaders going in get negative-stroke head starts based on the standings. This is the one that decides the trip champion. Always plays last.',
+  },
+]
+
 export function defaultRound(n) {
   return {
     round_number: n,
