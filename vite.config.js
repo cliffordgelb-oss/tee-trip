@@ -11,7 +11,7 @@ export default defineConfig({
       filename: 'sw.js',
       registerType: 'autoUpdate',
       injectRegister: false,
-      includeAssets: ['logo-icon.svg', 'logo-icon.png', 'logo-primary.svg', 'logo-wordmark.svg'],
+      includeAssets: ['logo-icon.png'],
       manifest: {
         name: 'Tee Trip',
         short_name: 'Tee Trip',
@@ -24,7 +24,6 @@ export default defineConfig({
         start_url: '/',
         icons: [
           { src: 'logo-icon.png', sizes: '512x512', type: 'image/png' },
-          { src: 'logo-icon.svg', sizes: 'any', type: 'image/svg+xml' },
         ],
       },
       injectManifest: {

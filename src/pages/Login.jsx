@@ -22,7 +22,7 @@ export default function Login() {
       <div style={{ maxWidth: 380, margin: '4rem auto 0' }}>
         <Card>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', marginBottom: 16 }}>
-            <img src="/logo-icon.svg" width="84" height="84" alt="" style={{ borderRadius: 18 }} />
+            <img src="/logo-icon.png" width="84" height="84" alt="" style={{ borderRadius: 18 }} />
             <h1 style={{ fontSize: 'var(--tt-text-2xl)', marginTop: 14, marginBottom: 0 }}>Tee Trip</h1>
             <p className="tt-small tt-muted" style={{ margin: '6px 0 0', maxWidth: 280 }}>
               Run your golf trip. Live scoring, leaderboards, group chat.
