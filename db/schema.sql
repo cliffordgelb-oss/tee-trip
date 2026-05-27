@@ -545,7 +545,8 @@ for each row execute function fn_dispatch_notification();
 -- }
 -- Returns: { "id": "<uuid>", "slug": "...", "player_id_map": {"cliff":"<uuid>", ...} }
 create or replace function rpc_create_tournament(config jsonb)
-returns jsonb language plpgsql security invoker as $$
+returns jsonb language plpgsql security definer
+set search_path = public, auth as $$
 declare
   v_uid                       uuid := auth.uid();
   v_t_id                      uuid;

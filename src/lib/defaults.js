@@ -25,6 +25,16 @@ export function defaultRound(n) {
   }
 }
 
-export function defaultPlayer() {
-  return { slug: '', name: '', emoji: '⛳', initials: '', email: '' }
+// Pool the wizard cycles through for default emojis (Tee Trip uses
+// emoji as the player avatar, per the design system).
+export const EMOJI_POOL = ['⛳', '🏌️', '🦅', '🐍', '🍺', '🐐', '🌮', '🥃', '🦁', '🐦', '🎯', '🏆']
+
+export function defaultPlayer(i = 0) {
+  return {
+    slug: '',
+    name: '',
+    emoji: EMOJI_POOL[i % EMOJI_POOL.length],
+    initials: '',
+    email: '',
+  }
 }
