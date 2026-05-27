@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase.js'
 import { useAuth } from '../lib/auth.jsx'
 import { useTournament } from '../lib/useTournament.js'
-import { deriveStrokesForFormat, getStrokesOnHole } from '../lib/scoring.js'
+import { deriveStrokesForFormat, getStrokesOnHole, computeSkinsForRound, isSkinsEligible } from '../lib/scoring.js'
 import { Shell, Header, Card, Button, Chip, PencilFilters } from '../components/ui.jsx'
 
 const GROUP_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F']
@@ -78,7 +78,134 @@ export default function RoundDetail() {
         members={t.members}
         onChange={t.refetch}
       />
+
+      {isSkinsEligible(round) && (
+        <SkinsPanel
+          round={round}
+          players={t.players}
+          holes={roundHoles}
+          scores={roundScores}
+          roundStrokes={roundStrokes}
+        />
+      )}
     </Shell>
+  )
+}
+
+// ── Skins panel (per round) ──────────────────────────────────
+function SkinsPanel({ round, players, holes, scores, roundStrokes }) {
+  const result = useMemo(
+    () => computeSkinsForRound({ round, holes, scores, roundStrokes }),
+    [round, holes, scores, roundStrokes]
+  )
+  const playerMap = useMemo(
+    () => Object.fromEntries(players.map(p => [p.id, p])),
+    [players]
+  )
+  const standings = useMemo(() => {
+    return Object.entries(result.totals)
+      .map(([pid, n]) => ({ player: playerMap[pid], total: n }))
+      .filter(r => r.player)
+      .sort((a, b) => b.total - a.total)
+  }, [result.totals, playerMap])
+
+  if (!result.eligible) return null
+
+  return (
+    <>
+      <h2 style={{
+        fontFamily: 'var(--tt-font-display)',
+        fontSize: 'var(--tt-text-lg)',
+        margin: '20px 0 10px',
+      }}>Skins</h2>
+
+      <Card>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
+          <span className="tt-eyebrow">Standings</span>
+          {result.unsettled > 0 && (
+            <Chip tone="gold">{result.unsettled} carrying</Chip>
+          )}
+        </div>
+
+        {standings.length === 0 ? (
+          <p className="tt-small tt-muted" style={{ margin: 0 }}>
+            No skins yet — set up the round and start entering scores.
+          </p>
+        ) : (
+          <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 14px' }}>
+            {standings.map((row, i) => (
+              <li
+                key={row.player.id}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  padding: '6px 0',
+                  borderTop: i === 0 ? 'none' : '1px solid var(--tt-line)',
+                }}
+              >
+                <span className="tt-small">
+                  <span style={{ marginRight: 6 }}>{row.player.emoji}</span>
+                  {row.player.name}
+                </span>
+                <span style={{ fontFamily: 'var(--tt-font-mono)', fontWeight: 700 }}>
+                  {row.total}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="tt-eyebrow" style={{ marginBottom: 6 }}>Hole by hole</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {result.bins.map(bin => (
+            <SkinPill key={bin.hole} bin={bin} playerMap={playerMap} />
+          ))}
+        </div>
+      </Card>
+    </>
+  )
+}
+
+function SkinPill({ bin, playerMap }) {
+  const baseStyle = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 4,
+    padding: '4px 8px',
+    borderRadius: 8,
+    fontFamily: 'var(--tt-font-mono)',
+    fontVariantNumeric: 'tabular-nums',
+    fontSize: 12,
+    fontWeight: 600,
+    border: '1px solid var(--tt-line)',
+  }
+  if (bin.status === 'won') {
+    const p = playerMap[bin.winnerId]
+    return (
+      <span style={{ ...baseStyle, background: 'var(--tt-fairway-tint)', color: 'var(--tt-fairway-deep)' }}>
+        {bin.hole}: {p?.emoji ?? '⛳'}
+        {bin.value > 1 && <span>×{bin.value}</span>}
+      </span>
+    )
+  }
+  if (bin.status === 'tied') {
+    return (
+      <span style={{ ...baseStyle, background: 'rgba(196,154,58,.15)', color: '#8a6a1e', borderColor: 'rgba(196,154,58,.4)' }}>
+        {bin.hole}: tied — carry
+      </span>
+    )
+  }
+  if (bin.status === 'pending') {
+    return (
+      <span style={{ ...baseStyle, color: 'var(--tt-ink-muted)' }}>
+        {bin.hole}: pending
+      </span>
+    )
+  }
+  return (
+    <span style={{ ...baseStyle, color: 'var(--tt-ink-muted)', opacity: 0.5 }}>
+      {bin.hole}: —
+    </span>
   )
 }
 

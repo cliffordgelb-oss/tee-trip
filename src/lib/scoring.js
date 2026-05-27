@@ -302,6 +302,108 @@ export function computeRoundPoints({
   return points
 }
 
+// ----- Skins side game.
+// A "skin" is awarded to the player with the unique lowest net score on a
+// hole. Ties carry the skin to the next hole, accumulating. We process
+// holes strictly in order and stop at the first un-finished hole — a
+// pending hole's skin (and any subsequent ones) can't be resolved yet.
+//
+// Field-wide and net-based, regardless of the round's primary format
+// (handicaps are normalized to the field minimum, same convention as
+// best-ball / scramble strokes).
+//
+// Only applies on individual-format rounds for v1 (individual_stroke,
+// championship). Team-format rounds have ambiguous per-player skin
+// semantics — punt on those until users ask.
+
+export const SKINS_ELIGIBLE_FORMATS = new Set(['individual_stroke', 'championship'])
+
+export function isSkinsEligible(round) {
+  return SKINS_ELIGIBLE_FORMATS.has(round?.format)
+}
+
+export function computeSkinsForRound({ round, holes, scores, roundStrokes }) {
+  const result = {
+    eligible: isSkinsEligible(round),
+    bins: [],
+    totals: {},
+    unsettled: 0,
+  }
+  if (!result.eligible) return result
+  if (!holes?.length) return result
+
+  const sortedHoles = [...holes].sort((a, b) => a.hole - b.hole)
+  const strokesMap = {}
+  for (const rs of roundStrokes || []) {
+    if (rs.round_id !== round.id) continue
+    strokesMap[rs.player_id] = { handicap: rs.handicap, group_assignment: rs.group_assignment }
+  }
+  const playerIds = Object.keys(strokesMap)
+  if (playerIds.length < 2) return result
+
+  // Field-relative handicap (everyone normalized to lowest in the round).
+  const effectiveStrokes = deriveStrokesForFormat(strokesMap, 'best_ball')
+  for (const pid of playerIds) result.totals[pid] = 0
+
+  const roundScores = (scores || []).filter(s => s.round_id === round.id)
+  let carry = 0
+  let stop = false
+
+  for (const h of sortedHoles) {
+    if (stop) {
+      result.bins.push({ hole: h.hole, par: h.par, status: 'unplayed' })
+      continue
+    }
+    const nets = []
+    let allEntered = true
+    for (const pid of playerIds) {
+      const s = roundScores.find(sc => sc.player_id === pid && sc.hole === h.hole)
+      if (!s) { allEntered = false; break }
+      const so = getStrokesOnHole(effectiveStrokes[pid] || 0, h.stroke_index, sortedHoles.length)
+      nets.push({ pid, net: s.gross - so })
+    }
+    const value = 1 + carry
+    if (!allEntered) {
+      result.bins.push({ hole: h.hole, par: h.par, status: 'pending', value })
+      stop = true
+      continue
+    }
+    const minNet = Math.min(...nets.map(n => n.net))
+    const winners = nets.filter(n => n.net === minNet)
+    if (winners.length === 1) {
+      const pid = winners[0].pid
+      result.bins.push({ hole: h.hole, par: h.par, status: 'won', winnerId: pid, value })
+      result.totals[pid] = (result.totals[pid] || 0) + value
+      carry = 0
+    } else {
+      result.bins.push({
+        hole: h.hole, par: h.par, status: 'tied', value,
+        tiedPlayerIds: winners.map(w => w.pid),
+      })
+      carry = value
+    }
+  }
+  result.unsettled = carry
+  return result
+}
+
+export function computeSkinsForTournament({ players, rounds, holes, scores, roundStrokes }) {
+  const totals = Object.fromEntries(players.map(p => [p.id, 0]))
+  const byRound = {}
+  for (const r of rounds) {
+    const roundHoles = holes.filter(h => h.round_id === r.id)
+    const out = computeSkinsForRound({
+      round: r, holes: roundHoles, scores, roundStrokes,
+    })
+    byRound[r.id] = out
+    if (!out.eligible) continue
+    for (const [pid, n] of Object.entries(out.totals)) {
+      totals[pid] = (totals[pid] || 0) + n
+    }
+  }
+  return { totals, byRound }
+}
+
 // ----- Full tournament leaderboard.
 export function computeLeaderboard({
   players, rounds, holes, scores, roundStrokes, scoringConfig, championshipTierSize,
